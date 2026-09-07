@@ -1,4 +1,5 @@
-# NILM (Non-Intrusive Load Monitoring) Energy Analysis and Disaggregation Platform
+"""
+NILM (Non-Intrusive Load Monitoring) Energy Analysis and Disaggregation Platform
 Runs the Python Tornado backend and serves the TypeScript frontend.
 """
 import os

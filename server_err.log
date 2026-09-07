@@ -1,0 +1,4 @@
+C:\Users\local\Documents\IA\Energia\nilm_app\backend\data_manager.py:149: UserWarning: Could not infer format, so each element will be parsed individually, falling back to `dateutil`. To ensure parsing is consistent and as-expected, please specify a format.
+  ts = pd.to_datetime(df[date_col].astype(str).str.strip() + ' ' + df[time_col].astype(str).str.strip(), errors='coerce')
+C:\Users\local\Documents\IA\Energia\nilm_app\backend\data_manager.py:149: UserWarning: Could not infer format, so each element will be parsed individually, falling back to `dateutil`. To ensure parsing is consistent and as-expected, please specify a format.
+  ts = pd.to_datetime(df[date_col].astype(str).str.strip() + ' ' + df[time_col].astype(str).str.strip(), errors='coerce')
