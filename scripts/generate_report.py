@@ -92,7 +92,7 @@ def main():
             fig.text(x + 0.015, y + 0.078, label, fontsize=9, color=INTI["gray"])
             fig.text(x + 0.015, y + 0.03, value, fontsize=17, color=INTI["blue"], weight="bold")
         fig.text(0.08, 0.18, "Configuración reproducida", fontsize=13, color=INTI["cyan"], weight="bold")
-        add_wrapped(fig, "Detección: ΔI ≥ 2 A o ΔP ≥ 1 kW. Agrupamiento: K-Means con 4 grupos, normalización StandardScaler y semilla aleatoria 42.", 0.08, 0.14, 108, 10)
+        add_wrapped(fig, "Detección: ΔI ≥ 2 A o ΔP ≥ 1 kW (arranques) y apagados simétricos. Agrupamiento: K-Means con 4 grupos, normalización StandardScaler y semilla aleatoria 42.", 0.08, 0.14, 108, 10)
         pdf.savefig(fig); plt.close(fig)
 
         # 2. Pipeline and variables
@@ -101,7 +101,7 @@ def main():
             ("1. Limpieza", "Fecha + hora → timestamp ordenado. Columnas eléctricas → valores numéricos."),
             ("2. Magnitudes", "I_total, V_avg, PF_avg, P_total, S_total, Q_total y THD_avg."),
             ("3. Cambios", "ΔI, ΔP y ΔQ entre muestras consecutivas."),
-            ("4. Eventos", "Se conservan las transiciones positivas que superan los umbrales."),
+            ("4. Eventos", "Se conservan las transiciones positivas y negativas (arranque y apagado) que superan los umbrales."),
             ("5. Firma", "Cada evento se representa como [ΔP, ΔI, THD, ΔQ]."),
             ("6. Clustering", "StandardScaler + K-Means, GMM o DBSCAN."),
         ]
@@ -132,7 +132,7 @@ def main():
         ax.scatter(event_times, event_power, s=10, color=INTI["coral"], alpha=0.7, label=f"Eventos detectados ({len(clustered)})")
         ax.set_xlabel("Tiempo")
         ax.set_ylabel("Potencia activa [kW]")
-        ax.set_title("Potencia agregada y transiciones positivas")
+        ax.set_title("Potencia agregada y transiciones detectadas (ON/OFF)")
         ax.grid(alpha=0.2)
         ax.legend(frameon=False)
         fig.autofmt_xdate()
@@ -188,9 +188,9 @@ def main():
         fig.text(0.08, 0.78, "Qué significa el resultado", fontsize=14, color=INTI["cyan"], weight="bold")
         add_wrapped(fig, "La aplicación identifica patrones de consumo y los agrupa según su firma eléctrica. Los nombres mostrados son categorías inferidas, no una confirmación del modelo exacto de la máquina.", 0.08, 0.74, 105, 10)
         fig.text(0.08, 0.59, "Limitaciones actuales", fontsize=14, color=INTI["cyan"], weight="bold")
-        add_wrapped(fig, "La potencia se estima a partir de tensión, corriente y factor de potencia; la detección actual prioriza transiciones positivas; la duración se estima buscando caídas de potencia; y los umbrales de identificación son reglas fijas.", 0.08, 0.55, 105, 10)
+        add_wrapped(fig, "La potencia se estima a partir de tensión, corriente y factor de potencia; las duraciones se estiman a partir de las transiciones de apagado (con heurística si no existe apagado limpio); y los umbrales de identificación son reglas fijas.", 0.08, 0.55, 105, 10)
         fig.text(0.08, 0.4, "Mejoras recomendadas", fontsize=14, color=INTI["cyan"], weight="bold")
-        add_wrapped(fig, "Validar contra mediciones individuales por equipo, incorporar eventos de apagado, usar duración y armónicos como características, entrenar un clasificador supervisado con etiquetas reales y evaluar precisión, recall, F1 y error de energía.", 0.08, 0.36, 105, 10)
+        add_wrapped(fig, "Validar contra mediciones individuales por equipo, usar duración y armónicos como características, entrenar un clasificador supervisado con etiquetas reales y evaluar precisión, recall, F1 y error de energía.", 0.08, 0.36, 105, 10)
         fig.text(0.08, 0.16, "Conclusión", fontsize=14, color=INTI["cyan"], weight="bold")
         add_wrapped(fig, "El sistema actual constituye una base funcional de NILM: detecta cambios, construye firmas, agrupa eventos y reconstruye curvas aproximadas por carga.", 0.08, 0.12, 105, 10)
         pdf.savefig(fig); plt.close(fig)

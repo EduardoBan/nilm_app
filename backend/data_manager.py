@@ -8,15 +8,42 @@ class DataManager:
     """
     Manages loading, caching, and downsampling of electrical data from Excel/Pickle files.
     """
-    def __init__(self, data_dir=r"C:\Users\local\Documents\IA\Energia\Data", cache_dir=r"C:\Users\local\Documents\IA\Energia\cache"):
+    def __init__(self, data_dir=None, cache_dir=None):
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        default_data = r"C:\Users\local\Documents\IA\Energia\Data"
+        if data_dir is None:
+            if os.path.exists(default_data):
+                data_dir = default_data
+            else:
+                data_dir = os.path.join(base_dir, "Data")
+        if cache_dir is None:
+            cache_dir = os.path.join(os.path.dirname(data_dir), "cache")
+
         self.data_dir = data_dir
         self.cache_dir = cache_dir
+        os.makedirs(self.data_dir, exist_ok=True)
         os.makedirs(self.cache_dir, exist_ok=True)
         self._memory_cache = {}
 
+    def save_upload(self, filename: str, content: bytes) -> str:
+        clean_name = os.path.basename(filename)
+        dest_path = os.path.join(self.data_dir, clean_name)
+        with open(dest_path, "wb") as f:
+            f.write(content)
+        slug = self.get_slug(clean_name)
+        if slug in self._memory_cache:
+            del self._memory_cache[slug]
+        pkl_path = os.path.join(self.cache_dir, f"{slug}.pkl")
+        if os.path.exists(pkl_path):
+            try:
+                os.remove(pkl_path)
+            except OSError:
+                pass
+        return dest_path
+
     def get_slug(self, filename: str) -> str:
         base = os.path.basename(filename)
-        return base.replace(".xlsx", "").replace(".csv", "").replace(" ", "_").lower()
+        return base.replace(".xlsx", "").replace(".xls", "").replace(".csv", "").replace(" ", "_").lower()
 
     def list_datasets(self):
         files = sorted(glob.glob(os.path.join(self.data_dir, "*.xlsx")) + glob.glob(os.path.join(self.data_dir, "*.csv")))
@@ -54,13 +81,22 @@ class DataManager:
                 except OSError:
                     pass
 
-        # Fallback to loading original excel if not cached yet
-        matching = [f for f in glob.glob(os.path.join(self.data_dir, "*.xlsx")) if self.get_slug(f) == dataset_id]
+        # Fallback to loading original file if not cached yet
+        all_files = (glob.glob(os.path.join(self.data_dir, "*.xlsx")) + 
+                     glob.glob(os.path.join(self.data_dir, "*.xls")) + 
+                     glob.glob(os.path.join(self.data_dir, "*.csv")))
+        matching = [f for f in all_files if self.get_slug(f) == dataset_id]
         if not matching:
             raise FileNotFoundError(f"Dataset {dataset_id} no encontrado en {self.data_dir}")
 
         f = matching[0]
-        df = pd.read_excel(f)
+        if f.lower().endswith('.csv'):
+            try:
+                df = pd.read_csv(f, sep=None, engine='python')
+            except Exception:
+                df = pd.read_csv(f)
+        else:
+            df = pd.read_excel(f)
         df.columns = [str(c).strip() for c in df.columns]
 
         date_col = 'Fecha' if 'Fecha' in df.columns else df.columns[0]
@@ -211,7 +247,6 @@ class DataManager:
             col_v1 = f"U H {h} L1 media [V]"
             col_v2 = f"U H {h} L2 media [V]"
             col_v3 = f"U H {h} L3 media [V]"
-            
             v_val = 0.0
             v_cols = [c for c in [col_v1, col_v2, col_v3] if c in df.columns]
             if v_cols:

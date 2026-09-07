@@ -46,11 +46,21 @@ class NILMApp {
   }
 
   private setupEventListeners() {
-    // Dataset select
-    const dsSelect = document.getElementById('dataset-select') as HTMLSelectElement;
-    dsSelect?.addEventListener('change', (e) => {
-      this.currentDatasetId = (e.target as HTMLSelectElement).value;
-      this.refreshData();
+    // Dataset dropdown selector
+    const selectDs = document.getElementById('select-dataset') as HTMLSelectElement;
+    selectDs?.addEventListener('change', async () => {
+      if (selectDs.value && selectDs.value !== this.currentDatasetId) {
+        this.currentDatasetId = selectDs.value;
+        const found = this.datasets.find(d => d.id === this.currentDatasetId);
+        if (found) this.updateFileLabel(found.filename);
+        await this.refreshData();
+      }
+    });
+
+    // File picker (upload a measurement file)
+    const fileInput = document.getElementById('dataset-file') as HTMLInputElement;
+    fileInput?.addEventListener('change', () => {
+      this.handleFileSelected(fileInput);
     });
 
     // Run Analysis Button
@@ -118,33 +128,76 @@ class NILMApp {
     this.showLoading(true);
     try {
       this.datasets = await api.getDatasets();
-      this.populateDatasetSelector();
 
       if (this.datasets.length > 0) {
         this.currentDatasetId = this.datasets[0].id;
+        this.updateFileLabel(this.datasets[0].filename);
+      } else {
+        this.updateFileLabel(null);
       }
+      this.updateDatasetSelect();
 
       await this.refreshData();
     } catch (err: any) {
       console.error(err);
+      this.updateFileLabel(null);
       this.showToast(`Error al cargar datos iniciales: ${err.message}`, 'error');
     } finally {
       this.showLoading(false);
     }
   }
 
-  private populateDatasetSelector() {
-    const dsSelect = document.getElementById('dataset-select') as HTMLSelectElement;
-    if (!dsSelect) return;
-    dsSelect.innerHTML = '';
-
+  private updateDatasetSelect() {
+    const selectDs = document.getElementById('select-dataset') as HTMLSelectElement;
+    if (!selectDs) return;
+    selectDs.innerHTML = '';
     this.datasets.forEach(d => {
       const opt = document.createElement('option');
       opt.value = d.id;
-      opt.textContent = `${d.label} (${d.filename})`;
+      opt.textContent = d.label || d.filename;
       if (d.id === this.currentDatasetId) opt.selected = true;
-      dsSelect.appendChild(opt);
+      selectDs.appendChild(opt);
     });
+  }
+
+  private async handleFileSelected(input: HTMLInputElement) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+
+    this.updateFileLabel(file.name);
+    this.showLoading(true);
+    try {
+      const ds = await api.uploadDataset(file);
+      this.currentDatasetId = ds.id;
+      const existingIdx = this.datasets.findIndex(d => d.id === ds.id);
+      if (existingIdx >= 0) {
+        this.datasets[existingIdx] = ds;
+      } else {
+        this.datasets.unshift(ds);
+      }
+      this.updateDatasetSelect();
+      this.updateFileLabel(ds.filename);
+      await this.refreshData();
+    } catch (err: any) {
+      console.error(err);
+      this.updateFileLabel(null);
+      this.showToast(`Error al cargar archivo: ${err.message}`, 'error');
+    } finally {
+      this.showLoading(false);
+      input.value = '';
+    }
+  }
+
+  private updateFileLabel(name: string | null, uploading: boolean = false) {
+    const labelEl = document.getElementById('dataset-file-name');
+    if (!labelEl) return;
+    if (uploading) {
+      labelEl.textContent = 'Procesando archivo…';
+    } else if (name) {
+      labelEl.textContent = name;
+    } else {
+      labelEl.textContent = 'Sin archivo seleccionado';
+    }
   }
 
   private async refreshData() {
@@ -382,6 +435,11 @@ class NILMApp {
     }));
 
     ChartEngine.renderGanttTimeline(container, machines, this.analysis.timeline_intervals);
+
+    const levelsContainer = document.getElementById('operation-levels-container');
+    if (levelsContainer) {
+      ChartEngine.renderOperationLevelLines(levelsContainer, machines, this.analysis.timeline_intervals);
+    }
   }
 
   private renderFeatures3DTab() {

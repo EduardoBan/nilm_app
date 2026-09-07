@@ -45,6 +45,19 @@ export class NILMApiService {
     return json.data;
   }
 
+  async uploadDataset(file: File): Promise<DatasetInfo> {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${this.baseUrl}/api/upload`, {
+      method: 'POST',
+      body: form
+    });
+    if (!res.ok) throw new Error(`Error subiendo dataset: ${res.statusText}`);
+    const json = await res.json();
+    if (json.status !== 'success') throw new Error(json.message || 'Error subiendo dataset');
+    return json.data;
+  }
+
   async runAnalysis(params: AnalysisParams): Promise<NILMAnalysisResult> {
     const res = await fetch(`${this.baseUrl}/api/analyze`, {
       method: 'POST',

@@ -1,4 +1,4 @@
-<!DOCTYPE html> npsis y Desagregación de Energía NILM (Non-Intrusive Load Monitoring)
+# Plataforma de Análisis y Desagregación de Energía NILM (Non-Intrusive Load Monitoring)
 
 Plataforma Cliente-Servidor de alto rendimiento para el análisis, desagregación y monitoreo no intrusivo de cargas eléctricas industriales y comerciales a partir de registros de analizadores de redes eléctricas (archivos Excel de `C:\Users\local\Documents\IA\Energia\Data`).
 
@@ -77,4 +77,3 @@ Cuando NILMTK está disponible, el análisis devuelve los estados de potencia ag
 - **Gaussian Mixture Models (GMM)**: Modelado probabilístico con matrices de covarianza para capturar cargas con variabilidad de régimen.
 - **DBSCAN**: Agrupamiento basado en densidad para identificar modos de operación atípicos o anomalías.
 - **Umbral de Disparo Ajustable**: Selector interactivo de sensibilidad de transitorio de corriente ($\Delta I$ de 0.5 A a 10 A).
-  time_minutes: number;   * Renders a pseudo-3D activity cloud using current, voltage and time as axes.    const canvas3D = document.getElementById('chart-activity-3d') as HTMLCanvasElement;                "time_minutes": float(r['timestamp'].hour * 60 + r['timestamp'].minute + r['timestamp'].second / 60.0),    const maxX = Math.max(...events.map(e => Math.abs(e.x)), 1) * 1.15;      const root = project3D(0, 0, 0);    const state = {

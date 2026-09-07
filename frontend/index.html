@@ -25,6 +25,9 @@
         <div class="status-dot"></div>
         <span>Servidor Python / Cliente TypeScript Online</span>
       </div>
+      <a href="/api/report" target="_blank" class="report-link" title="Descargar Informe Técnico NILM en PDF">
+        📄 <span>Informe PDF</span>
+      </a>
       <label class="theme-switcher" for="theme-select">
         <span>Paleta</span>
         <select id="theme-select" class="theme-select" aria-label="Seleccionar paleta de color">
@@ -41,10 +44,15 @@
     <!-- Control Bar -->
     <section class="control-bar">
       <div class="control-group">
-        <label for="dataset-select">📂 Archivo / Medición:</label>
-        <select id="dataset-select" class="select-input">
-          <option value="coop_gouge_v2_10_abril">Cargando mediciones...</option>
+        <label for="select-dataset">📂 Medición:</label>
+        <select id="select-dataset" class="select-input" aria-label="Seleccionar medición existente">
+          <option value="">Cargando mediciones…</option>
         </select>
+        <div class="file-picker">
+          <input type="file" id="dataset-file" class="file-input" accept=".xlsx,.xls,.csv" aria-label="Buscar o subir archivo de medición">
+          <label for="dataset-file" class="file-button" title="Subir otro archivo .xlsx o .csv">➕ Subir…</label>
+          <span id="dataset-file-name" class="file-name" style="display:none;"></span>
+        </div>
       </div>
 
       <div class="control-group">
@@ -210,6 +218,16 @@
           </div>
         </div>
         <div id="gantt-container"></div>
+      </div>
+
+      <div class="card" style="margin-top: 16px;">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">📈 Tiempo de Operación - Líneas de Nivel</h2>
+            <p class="card-subtitle">Inicio y fin de funcionamiento de todos los equipos detectados a lo largo del día (00:00 a 24:00)</p>
+          </div>
+        </div>
+        <div id="operation-levels-container"></div>
       </div>
     </section>
 

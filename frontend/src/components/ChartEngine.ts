@@ -814,6 +814,148 @@ export class ChartEngine {
   }
 
   /**
+   * Renders Operation Time Level Lines Chart
+   * Each machine occupies its own horizontal level (nivel). A thin dashed
+   * baseline spans the full 24h day and thick segments mark when the machine
+   * was operating, labelling the start and end times of each block.
+   */
+  static renderOperationLevelLines(
+    container: HTMLElement,
+    machines: Array<{ id: number; name: string; color: string }>,
+    intervals: Array<{ machine_id: number; start_time: string; end_time: string; duration_minutes: number; avg_power_kw: number; energy_kwh: number }>
+  ) {
+    container.innerHTML = '';
+    const wrapper = document.createElement('div');
+    wrapper.className = 'levels-wrapper';
+
+    // Time header 00:00 to 24:00
+    const header = document.createElement('div');
+    header.className = 'levels-header';
+    header.innerHTML = '<div class="levels-label-col">Equipo / Máquina</div><div class="levels-track-header">';
+    for (let h = 0; h <= 24; h += 3) {
+      header.innerHTML += `<span class="levels-hour">${h.toString().padStart(2, '0')}:00</span>`;
+    }
+    header.innerHTML += '</div>';
+    wrapper.appendChild(header);
+
+    const parseSec = (t: string): number => {
+      const p = t.split(':').map(Number);
+      return (p[0] || 0) * 3600 + (p[1] || 0) * 60 + (p[2] || 0);
+    };
+
+    const fmtTime = (sec: number): string => {
+      sec = Math.max(0, Math.round(sec));
+      const h = Math.floor(sec / 3600) % 24;
+      const m = Math.floor((sec % 3600) / 60);
+      return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+    };
+
+    // Merge consecutive / overlapping intervals into readable operation blocks
+    const buildBlocks = (machineId: number) => {
+      const ranges = intervals
+        .filter(it => it.machine_id === machineId)
+        .map(it => {
+          const s = parseSec(it.start_time);
+          let e = parseSec(it.end_time);
+          if (e <= s) e = s + Math.max(300, it.duration_minutes * 60);
+          return { s, e, raw: it };
+        })
+        .sort((a, b) => a.s - b.s);
+
+      const blocks = [];
+      ranges.forEach(r => {
+        const last = blocks.length ? blocks[blocks.length - 1] : null;
+        if (last && r.s <= last.e + 300) {
+          last.e = Math.max(last.e, r.e);
+          last.raw.push(r.raw);
+        } else {
+          blocks.push({ s: r.s, e: r.e, raw: [r.raw] });
+        }
+      });
+      return blocks;
+    };
+
+    machines.forEach(m => {
+      const row = document.createElement('div');
+      row.className = 'levels-row';
+
+      const label = document.createElement('div');
+      label.className = 'levels-label';
+
+      const labelMain = document.createElement('div');
+      labelMain.className = 'levels-label-main';
+      labelMain.innerHTML = `<span class="levels-dot" style="background:${m.color}"></span> ${m.name}`;
+      label.appendChild(labelMain);
+
+      const blocks = buildBlocks(m.id);
+      const meta = document.createElement('div');
+      meta.className = 'levels-meta';
+      if (blocks.length) {
+        const totalMin = blocks.reduce((acc, b) => acc + Math.round((b.e - b.s) / 60), 0);
+        meta.textContent = `${blocks.length} bloque${blocks.length === 1 ? '' : 's'} · ${totalMin} min totales`;
+      } else {
+        meta.textContent = 'Sin operación detectada';
+      }
+      label.appendChild(meta);
+      row.appendChild(label);
+
+      const track = document.createElement('div');
+      track.className = 'levels-track';
+
+      // Full-day baseline (level line)
+      const baseline = document.createElement('div');
+      baseline.className = 'levels-baseline';
+      track.appendChild(baseline);
+
+      // 3-hour gridlines
+      for (let h = 3; h < 24; h += 3) {
+        const grid = document.createElement('div');
+        grid.className = 'levels-gridline';
+        grid.style.left = `${(h / 24) * 100}%`;
+        track.appendChild(grid);
+      }
+
+      blocks.forEach(b => {
+        const leftPct = (b.s / 86400) * 100;
+        const widthPct = Math.max(0.4, ((b.e - b.s) / 86400) * 100);
+
+        const seg = document.createElement('div');
+        seg.className = 'levels-block';
+        seg.style.left = `${leftPct}%`;
+        seg.style.width = `${widthPct}%`;
+        seg.style.backgroundColor = m.color;
+        seg.title = `${m.name}\nInicio: ${fmtTime(b.s)}\nFin: ${fmtTime(b.e)}\nBloque: ${b.raw.length} intervalo(s) · ${Math.round((b.e - b.s) / 60)} min`;
+        track.appendChild(seg);
+
+        if (widthPct >= 5) {
+          const startLbl = document.createElement('span');
+          startLbl.className = 'levels-time-label levels-time-start';
+          startLbl.textContent = `Inicio ${fmtTime(b.s)}`;
+          startLbl.style.left = `${leftPct}%`;
+          track.appendChild(startLbl);
+
+          const endLbl = document.createElement('span');
+          endLbl.className = 'levels-time-label levels-time-end';
+          endLbl.textContent = `Fin ${fmtTime(b.e)}`;
+          endLbl.style.left = `${leftPct + widthPct}%`;
+          track.appendChild(endLbl);
+        } else if (widthPct >= 2.5) {
+          const midLbl = document.createElement('span');
+          midLbl.className = 'levels-time-label levels-time-mid';
+          midLbl.textContent = `${fmtTime(b.s)} → ${fmtTime(b.e)}`;
+          midLbl.style.left = `${leftPct + widthPct / 2}%`;
+          track.appendChild(midLbl);
+        }
+      });
+
+      row.appendChild(track);
+      wrapper.appendChild(row);
+    });
+
+    container.appendChild(wrapper);
+  }
+
+  /**
    * Renders Bar Chart (Harmonics, 24h Activity)
    */
   static renderBarChart(

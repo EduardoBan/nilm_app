@@ -129,6 +129,27 @@ body {
   gap: 14px;
 }
 
+.report-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(0, 181, 226, 0.15);
+  border: 1px solid var(--accent-cyan);
+  color: #FFFFFF;
+  text-decoration: none;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+}
+
+.report-link:hover {
+  background: var(--accent-cyan);
+  color: #003087;
+  box-shadow: 0 0 10px rgba(0, 181, 226, 0.4);
+}
+
 .theme-switcher {
   display: flex;
   align-items: center;
@@ -219,6 +240,46 @@ body {
 
 .select-input:focus, .number-input:focus {
   border-color: var(--accent-blue);
+}
+
+.file-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.file-input {
+  display: none;
+}
+
+.file-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-card-sub);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: border-color 0.2s, background-color 0.2s;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.file-button:hover {
+  border-color: var(--accent-blue);
+  background: var(--bg-card);
+}
+
+.file-name {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .slider-wrap {

@@ -89,6 +89,44 @@ class HarmonicsHandler(BaseHandler):
             self.set_status(500)
             self.write_json({"status": "error", "message": str(e)})
 
+class UploadHandler(BaseHandler):
+    """Accepts a measurement file (.xlsx/.xls/.csv) chosen by the user and makes
+    it available for analysis through the standard dataset endpoints."""
+
+    ALLOWED_EXT = {".xlsx", ".xls", ".csv"}
+
+    def post(self):
+        try:
+            file_field = self.request.files.get("file")
+            if not file_field:
+                self.set_status(400)
+                self.write_json({"status": "error", "message": "No se recibió ningún archivo (campo 'file')."})
+                return
+
+            fileinfo = file_field[0]
+            filename = fileinfo.get("filename", "") or "medicion.xlsx"
+            content = fileinfo.get("body", b"")
+            ext = os.path.splitext(filename)[1].lower()
+
+            if ext not in self.ALLOWED_EXT:
+                self.set_status(400)
+                self.write_json({"status": "error", "message": f"Extensión no soportada '{ext}'. Usa .xlsx, .xls o .csv."})
+                return
+
+            dest = dm.save_upload(filename, content)
+            dataset_id = dm.get_slug(os.path.basename(dest))
+            info = {
+                "id": dataset_id,
+                "filename": os.path.basename(dest),
+                "label": f"Medición {os.path.basename(dest)}",
+                "cached": False,
+                "size_mb": round(os.path.getsize(dest) / (1024 * 1024), 2)
+            }
+            self.write_json({"status": "success", "data": info})
+        except Exception as e:
+            self.set_status(500)
+            self.write_json({"status": "error", "message": str(e)})
+
 class AnalyzeHandler(BaseHandler):
     def get(self):
         self.post()
@@ -120,6 +158,22 @@ class AnalyzeHandler(BaseHandler):
             self.set_status(500)
             self.write_json({"status": "error", "message": str(e)})
 
+class ReportHandler(BaseHandler):
+    def get(self):
+        try:
+            pdf_path = os.path.join(BASE_DIR, "Informe_NILM_Inti.pdf")
+            if not os.path.exists(pdf_path):
+                self.set_status(404)
+                self.write_json({"status": "error", "message": "Informe PDF no encontrado."})
+                return
+            self.set_header("Content-Type", "application/pdf")
+            self.set_header("Content-Disposition", 'inline; filename="Informe_NILM_Inti.pdf"')
+            with open(pdf_path, "rb") as f:
+                self.write(f.read())
+        except Exception as e:
+            self.set_status(500)
+            self.write_json({"status": "error", "message": str(e)})
+
 def make_app():
     frontend_dir = os.path.join(BASE_DIR, "frontend")
     return tornado.web.Application([
@@ -127,7 +181,9 @@ def make_app():
         (r"/api/summary", SummaryHandler),
         (r"/api/timeseries", TimeseriesHandler),
         (r"/api/harmonics", HarmonicsHandler),
+        (r"/api/upload", UploadHandler),
         (r"/api/analyze", AnalyzeHandler),
+        (r"/api/report", ReportHandler),
         (r"/(.*)", tornado.web.StaticFileHandler, {
             "path": frontend_dir,
             "default_filename": "index.html"

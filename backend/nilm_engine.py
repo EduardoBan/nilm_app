@@ -2,8 +2,9 @@ import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.mixture import GaussianMixture
+from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 
 try:
     from nilmtk.feature_detectors.cluster import cluster as nilmtk_cluster_states
@@ -45,6 +46,8 @@ class NILMEngine:
         """
         Detects electrical switching events (turn-on and turn-off transients)
         using multi-parameter step changes.
+        Each detected transition is labelled in the 'event_type' column:
+        'ON' for positive transitions (turn-on) and 'OFF' for negative ones.
         """
         i_cols = [c for c in ['I *L1 media [A]', 'I *L2 media [A]', 'I *L3 media [A]'] if c in df.columns]
         v_cols = [c for c in ['U L1 media [V]', 'U L2 media [V]', 'U L3 media [V]'] if c in df.columns]
@@ -80,23 +83,54 @@ class NILMEngine:
         else:
             df_work['THD_avg'] = 15.0
 
+        # --- Harmonic transient tracking (Opción A - Punto 3) ---
+        # Sum of harmonic currents (orders 3..13 across phases). The variation
+        # of this signal at the instant of a start-up transient discriminates
+        # power-electronics loads (VFDs, welders, rectifiers) from purely
+        # inductive machines (DOL / star-delta motor starts).
+        harm_total = None
+        for h_order in (3, 5, 7, 9, 11, 13):
+            h_cols = [c for c in df_work.columns
+                      if c.startswith(f'I H {h_order} L') and 'media [A]' in c]
+            if h_cols:
+                h_series = df_work[h_cols].sum(axis=1)
+                harm_total = h_series if harm_total is None else harm_total + h_series
+        df_work['H_total'] = harm_total if harm_total is not None else 0.0
+
         # Step differences (deltas)
         df_work['delta_P'] = df_work['P_total'].diff().fillna(0)
         df_work['delta_Q'] = df_work['Q_total'].diff().fillna(0)
         df_work['delta_I'] = df_work['I_total'].diff().fillna(0)
+        df_work['delta_H'] = df_work['H_total'].diff().fillna(0)
+        df_work['delta_THD'] = df_work['THD_avg'].diff().fillna(0)
         
-        # Filter turn-on events (positive transitions)
+        # Detect turn-on events (positive transitions)
         mask_on = (df_work['delta_I'] >= current_threshold) | (df_work['delta_P'] >= power_threshold)
-        events = df_work[mask_on].copy()
+        # Detect turn-off events (negative transitions)
+        mask_off = (df_work['delta_I'] <= -current_threshold) | (df_work['delta_P'] <= -power_threshold)
+
+        events = df_work[mask_on | mask_off].copy()
+        events['event_type'] = np.where(
+            mask_on.reindex(events.index).fillna(False).values, 'ON', 'OFF'
+        )
         
         # Additional features
         events['hour_of_day'] = events['timestamp'].dt.hour + events['timestamp'].dt.minute / 60.0
-        
+
+        # Harmonic transient signature: harmonic-current step (ΔIh, H3..H13)
+        # relative to the fundamental-current step (ΔI1 ≈ ΔI total), in %.
+        # High values => non-linear power-electronics load; low values with a
+        # large reactive inrush => induction motor with direct start.
+        denom = events['delta_I'].abs().clip(lower=0.1)
+        events['harm_ratio_pct'] = (events['delta_H'].abs() / denom * 100.0).clip(upper=500.0)
+        events['delta_thd'] = events['delta_THD']
+
         return df_work, events
 
     def cluster_appliances(self, events: pd.DataFrame, 
                            n_clusters: int = 4, 
-                           algorithm: str = "kmeans") -> pd.DataFrame:
+                           algorithm: str = "kmeans",
+                           labels: Optional[Dict[str, str]] = None) -> Tuple[pd.DataFrame, Dict[int, Any]]:
         """
         Applies Machine Learning clustering (K-Means, GMM, or DBSCAN)
         on multi-dimensional electrical features.
@@ -107,8 +141,13 @@ class NILMEngine:
             events['color'] = []
             return events, {}
 
-        # Refined feature vector: delta_P, delta_I, THD_avg, delta_Q
-        features = ['delta_P', 'delta_I', 'THD_avg', 'delta_Q']
+        # Feature vector based on absolute magnitudes so that the turn-ON and
+        # turn-OFF transitions of the same machine (same size, opposite sign)
+        # cluster together.
+        events['abs_delta_P'] = events['delta_P'].abs()
+        events['abs_delta_I'] = events['delta_I'].abs()
+        events['abs_delta_Q'] = events['delta_Q'].abs()
+        features = ['abs_delta_P', 'abs_delta_I', 'THD_avg', 'abs_delta_Q']
         X = events[features].fillna(0).values
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
@@ -139,15 +178,27 @@ class NILMEngine:
         cluster_info = {}
         # Sort clusters by average power descending
         raw_clusters = sorted(events['cluster'].unique())
-        avg_powers = {c: float(events[events['cluster'] == c]['delta_P'].mean()) for c in raw_clusters}
+        avg_powers = {c: float(events[events['cluster'] == c]['delta_P'].abs().mean()) for c in raw_clusters}
         sorted_clusters = sorted(raw_clusters, key=lambda c: avg_powers[c], reverse=True)
 
         for rank, c in enumerate(sorted_clusters):
             sub = events[events['cluster'] == c]
-            avg_p = float(sub['delta_P'].mean())
-            avg_i = float(sub['delta_I'].mean())
+            # Cluster magnitude (absolute delta) = nominal step of the machine,
+            # valid for both ON and OFF transitions.
+            avg_p = float(sub['delta_P'].abs().mean())
+            avg_i = float(sub['delta_I'].abs().mean())
+            avg_q = float(sub['delta_Q'].abs().mean()) if 'delta_Q' in sub else 0.0
             avg_thd = float(sub['THD_avg'].mean())
-            avg_q = float(sub['delta_Q'].mean()) if 'delta_Q' in sub else 0.0
+
+            # --- Harmonic transient refinement (Opción A - Punto 3) ---
+            # Median harmonic step ratio (ΔIh / ΔI1) over the start-up
+            # transients of the cluster and reactive/active step ratio.
+            if 'harm_ratio_pct' in sub.columns:
+                harm_ratio = float(sub['harm_ratio_pct'].median())
+            else:
+                harm_ratio = 0.0
+            q_p_ratio = (avg_q / avg_p) if avg_p > 1e-6 else 0.0
+            signature = self.classify_load_signature(avg_thd, harm_ratio, q_p_ratio)
 
             # Heuristic machine naming based on electrical signature
             if avg_p >= 25.0 or avg_i >= 40.0:
@@ -166,6 +217,10 @@ class NILMEngine:
                 name = f"Auxiliares / Standby ({avg_p:.1f} kW)"
                 category = "Iluminación / Auxiliar"
 
+            # The harmonic/transient classification refines the technology
+            # category (non-linear vs inductive vs resistive).
+            category = signature['load_class']
+
             cluster_info[c] = {
                 "name": name,
                 "category": category,
@@ -174,14 +229,157 @@ class NILMEngine:
                 "avg_delta_i": round(avg_i, 2),
                 "avg_delta_q": round(avg_q, 2),
                 "avg_thd": round(avg_thd, 1),
-                "count": len(sub)
+                "count": len(sub),
+                "on_count": int((sub['event_type'] == 'ON').sum()),
+                "off_count": int((sub['event_type'] == 'OFF').sum()),
+                "load_class": signature['load_class'],
+                "load_icon": signature['load_icon'],
+                "load_family": signature['family'],
+                "harmonic_signature_pct": round(harm_ratio, 1),
+                "q_p_ratio": round(q_p_ratio, 2),
+                "custom_label": False
             }
+
+        # --- Manual Ground-Truth renaming (Opción A - Punto 2) ---
+        # User-defined labels persisted per dataset+cluster override the
+        # automatic heuristic names on every subsequent analysis.
+        if labels:
+            for key, custom_name in labels.items():
+                try:
+                    c_idx = int(key)
+                except (TypeError, ValueError):
+                    continue
+                clean = str(custom_name).strip() if custom_name else ""
+                if c_idx in cluster_info and clean:
+                    cluster_info[c_idx]["name"] = clean
+                    cluster_info[c_idx]["custom_label"] = True
 
         events['machine_name'] = events['cluster'].map(lambda c: cluster_info[c]['name'])
         events['color'] = events['cluster'].map(lambda c: cluster_info[c]['color'])
         events['category'] = events['cluster'].map(lambda c: cluster_info[c]['category'])
 
         return events, cluster_info
+
+    @staticmethod
+    def classify_load_signature(avg_thd: float, harm_ratio_pct: float, q_p_ratio: float) -> Dict[str, str]:
+        """
+        Discriminates the load technology using the start-up transient
+        (Opción A - Punto 3: Refinamiento por Armónicos Transitorios):
+
+        - Non-linear loads (variable frequency drives, welders, rectifiers)
+          inject a strong harmonic step: high ΔIh/ΔI1 ratio and high THD.
+        - Purely inductive machines (DOL / star-delta motor starts) draw a
+          large reactive inrush (high ΔQ/ΔP) with a clean, low-harmonic wave.
+        - Resistive loads (heaters, lighting) show neither reactive nor
+          harmonic steps.
+        """
+        harm_ratio_pct = max(0.0, float(harm_ratio_pct))
+        q_p_ratio = max(0.0, float(q_p_ratio))
+        avg_thd = max(0.0, float(avg_thd))
+
+        if harm_ratio_pct >= 15.0 or avg_thd >= 35.0:
+            if q_p_ratio <= 0.30:
+                return {
+                    "load_class": "Electrónica de Potencia (Variador / Rectificador)",
+                    "load_icon": "🎛️",
+                    "family": "no_lineal"
+                }
+            return {
+                "load_class": "Carga No Lineal (Soldadora / Arco Eléctrico)",
+                "load_icon": "⚡",
+                "family": "no_lineal"
+            }
+        if q_p_ratio >= 0.45:
+            return {
+                "load_class": "Motor Inductivo (Arranque Directo / Estrella-Tríangulo)",
+                "load_icon": "⚙️",
+                "family": "inductiva"
+            }
+        if q_p_ratio >= 0.18:
+            return {
+                "load_class": "Motor / Carga Mixta (Arranque Suave)",
+                "load_icon": "🌀",
+                "family": "inductiva"
+            }
+        return {
+            "load_class": "Carga Resistiva (Calefacción / Iluminación)",
+            "load_icon": "🔥",
+            "family": "resistiva"
+        }
+
+    def estimate_machine_states(self, events: pd.DataFrame,
+                                cluster_info: Dict[int, Any],
+                                max_states: int = 3) -> Dict[int, Dict[str, Any]]:
+        """
+        Multi-state level estimation per appliance (FHMM front-end).
+        (Opción A - Punto 1: Modelado Multi-Estado FHMM/HMM)
+
+        Clusters the turn-ON power steps of every appliance into intermediate
+        operating levels using K-Means + silhouette validation, so complex
+        industrial machines (e.g. a compressor running unloaded / loaded /
+        stopped) are modeled with more than a binary ON/OFF state.
+        Level 0 is always OFF (0 kW).
+        """
+        machine_states: Dict[int, Dict[str, Any]] = {}
+        if len(events) == 0:
+            return machine_states
+
+        max_states = max(2, int(max_states))
+        state_names_by_count = {
+            1: ["Apagado", "Encendido (Plena Carga)"],
+            2: ["Apagado", "Marcha en Vacío (Parcial)", "Plena Carga"],
+            3: ["Apagado", "Carga Baja", "Carga Media", "Plena Carga"],
+            4: ["Apagado", "Nivel Mínimo", "Nivel Bajo", "Nivel Medio", "Plena Carga"]
+        }
+
+        for c, info in cluster_info.items():
+            sub = events[(events['cluster'] == c) & (events['event_type'] == 'ON')]
+            vals = sub['delta_P'].abs().clip(lower=0.2).to_numpy(dtype=float)
+            nominal = max(0.5, float(info['avg_delta_p']))
+            levels = [nominal]
+
+            # Only look for intermediate states when there is enough evidence
+            # (>= 6 ON transitions) and the user allows more than 2 states.
+            if len(vals) >= 6 and max_states > 2:
+                best_k, best_score = 1, 0.0
+                k_upper = min(max_states - 1, len(vals) - 1, 4)
+                for k in range(2, k_upper + 1):
+                    km = KMeans(n_clusters=k, random_state=42, n_init=10)
+                    k_labels = km.fit_predict(vals.reshape(-1, 1))
+                    if len(np.unique(k_labels)) < 2:
+                        continue
+                    score = float(silhouette_score(vals.reshape(-1, 1), k_labels))
+                    if score > best_score:
+                        best_score, best_k = score, k
+                if best_k > 1 and best_score >= 0.20:
+                    km = KMeans(n_clusters=best_k, random_state=42, n_init=10)
+                    km.fit(vals.reshape(-1, 1))
+                    raw_levels = sorted(float(x) for x in km.cluster_centers_.flatten())
+                    # Merge nearly-identical levels (< 25% of the top level)
+                    merged = [raw_levels[0]]
+                    for lv in raw_levels[1:]:
+                        if lv - merged[-1] >= 0.25 * max(raw_levels):
+                            merged.append(lv)
+                    if len(merged) >= 2:
+                        levels = merged
+
+            names = state_names_by_count.get(
+                len(levels),
+                ["Apagado"] + [f"Nivel {i}" for i in range(1, len(levels))] + ["Plena Carga"]
+            )
+            states_list = [{"level": 0, "kw": 0.0, "name": names[0]}]
+            for i, lv in enumerate(levels):
+                states_list.append({
+                    "level": i + 1,
+                    "kw": round(float(lv), 2),
+                    "name": names[i + 1] if i + 1 < len(names) else f"Nivel {i + 1}"
+                })
+            machine_states[c] = {
+                "levels": np.array([0.0] + [float(s['kw']) for s in states_list[1:]]),
+                "states": states_list,
+                "n_states": len(states_list)
+            }
+        return machine_states
 
     def disaggregate_load(self, df_work: pd.DataFrame, 
                           events: pd.DataFrame, 
@@ -204,6 +402,11 @@ class NILMEngine:
         for c in clusters:
             info = cluster_info[c]
             c_events = events[events['cluster'] == c].sort_values('timestamp')
+            # Separate turn-ON and turn-OFF transitions: each run window starts
+            # at a turn-ON and ends at the next turn-OFF of the same machine.
+            c_events_on = c_events[c_events['event_type'] == 'ON']
+            c_events_off = c_events[c_events['event_type'] == 'OFF']
+            off_times = pd.to_datetime(c_events_off['timestamp']).to_numpy(dtype='datetime64[ns]')
             nominal_p = max(0.5, info['avg_delta_p'])
             
             for _, ev in c_events.iterrows():
