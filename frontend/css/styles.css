@@ -71,7 +71,7 @@ body {
 
 /* Header */
 .app-header {
-  background: linear-gradient(180deg, #003087 0%, var(--bg-main) 100%);
+  background: #00B5E2;
   border-bottom: 1px solid var(--border-color);
   padding: 1rem 2rem;
   display: flex;
@@ -133,8 +133,8 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: rgba(0, 181, 226, 0.15);
-  border: 1px solid var(--accent-cyan);
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.55);
   color: #FFFFFF;
   text-decoration: none;
   font-size: 0.8rem;
@@ -145,9 +145,9 @@ body {
 }
 
 .report-link:hover {
-  background: var(--accent-cyan);
+  background: #FFFFFF;
   color: #003087;
-  box-shadow: 0 0 10px rgba(0, 181, 226, 0.4);
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.35);
 }
 
 .theme-switcher {

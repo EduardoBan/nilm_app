@@ -484,42 +484,14 @@ class NILMApp {
       const card = document.createElement('div');
       card.className = 'machine-card';
       card.style.borderLeft = `5px solid ${m.color}`;
-
-      const loadBadge = m.load_class
-        ? `<span class="load-badge load-${m.load_family || 'inductiva'}" title="Clasificación por armónicos transitorios (ΔIh/ΔI₁ = ${(m.harmonic_signature_pct ?? 0).toFixed(0)}% · ΔQ/ΔP = ${(m.q_p_ratio ?? 0).toFixed(2)})">${m.load_icon || '⚙️'} ${m.load_class}</span>`
-        : `<span class="load-badge load-inductiva" title="${m.category}">⚙️ ${m.category}</span>`;
-
-      const fhmmFlag = (m.n_states ?? 2) > 2
-        ? `<span class="ms-flag" title="Modelo multi-estado FHMM con estados intermedios">FHMM · ${m.n_states} estados</span>`
-        : '';
-
-      // Opción A - Punto 1: FHMM operating-state breakdown (non-OFF states)
-      let statesHtml = '';
-      if (this.useFhmm && m.states && m.states.length > 0) {
-        const activeStates = m.states.filter(s => s.kw > 0);
-        if (activeStates.length > 0) {
-          statesHtml = `
-            <div class="mc-states">
-              <span class="mc-states-title">Estados de Operación (FHMM)</span>
-              ${activeStates.map(s => `
-                <div class="state-row">
-                  <span class="state-name" title="${s.name}">${s.name}</span>
-                  <span class="state-bar"><span style="width:${Math.max(4, Math.min(100, s.share_pct))}%; background:${m.color}"></span></span>
-                  <span class="state-val">${s.kw.toFixed(1)} kW · ${s.minutes.toFixed(0)} min · ${s.energy_kwh.toFixed(2)} kWh</span>
-                </div>`).join('')}
-            </div>`;
-        }
-      }
-
       card.innerHTML = `
         <div class="mc-header">
           <div>
-            <h3 style="color:${m.color}"><span class="editable-name" data-machine="${m.id}">${m.name}</span> <button class="edit-btn" data-edit="${m.id}" title="Renombrar equipo (Ground Truth)">✏️</button>${m.custom_label ? ' <span class="gt-flag" title="Etiqueta personalizada guardada">GT</span>' : ''}</h3>
+            <h3 style="color:${m.color}">${m.name}</h3>
             <span class="mc-category">${m.category}</span>
           </div>
           <span class="mc-status badge-status status-active">${m.status}</span>
         </div>
-        <div class="mc-loadrow">${loadBadge}${fhmmFlag}</div>
         <div class="mc-grid">
           <div class="mc-stat">
             <span class="mc-stat-label">Potencia Nominal</span>
@@ -534,10 +506,6 @@ class NILMApp {
             <span class="mc-stat-val">${m.thd_pct.toFixed(1)} %</span>
           </div>
           <div class="mc-stat">
-            <span class="mc-stat-label">Firma Armónica ΔIh/ΔI₁</span>
-            <span class="mc-stat-val">${(m.harmonic_signature_pct ?? 0).toFixed(0)} %</span>
-          </div>
-          <div class="mc-stat">
             <span class="mc-stat-label">Total Arranques</span>
             <span class="mc-stat-val">${m.event_count}</span>
           </div>
@@ -550,19 +518,8 @@ class NILMApp {
             <span class="mc-stat-val">${m.energy_kwh.toFixed(2)} kWh (${m.energy_share_pct.toFixed(1)}%)</span>
           </div>
         </div>
-        ${statesHtml}
       `;
       container.appendChild(card);
-    });
-
-    // Bind Ground-Truth rename buttons (Opción A - Punto 2)
-    container.querySelectorAll<HTMLButtonElement>('button.edit-btn').forEach(btn => {
-      btn.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        const id = parseInt(btn.dataset['edit'] || '0', 10);
-        const nameSpan = btn.closest('h3')?.querySelector<HTMLElement>('.editable-name');
-        if (nameSpan) this.startRename(id, nameSpan);
-      });
     });
   }
 

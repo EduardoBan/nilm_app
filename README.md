@@ -76,7 +76,7 @@ Cuando NILMTK está disponible, el análisis devuelve los estados de potencia ag
 - **K-Means Clustering**: Agrupamiento óptimo por centroides multidimensionales con inicialización k-means++.
 - **Gaussian Mixture Models (GMM)**: Modelado probabilístico con matrices de covarianza para capturar cargas con variabilidad de régimen.
 - **DBSCAN**: Agrupamiento basado en densidad para identificar modos de operación atípicos o anomalías.
-- **Umbral de Disparo Ajustable**: Selector interactivo de sensibilidad de transitorio de corriente ($\Delta I$ de 0.5 A a 10 A).
+- ** Adjustable Trip Threshold **: Interactive current transient sensitivity selector ($\Delta I$ from 0.5 A to 10 A).
 
 ---
 

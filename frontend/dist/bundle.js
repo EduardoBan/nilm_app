@@ -242,8 +242,26 @@ class ChartEngine {
     const height = rect.height || 380;
 
     const maxX = Math.max(...events.map(e => Math.abs(e.x)), 1) * 1.15;
-    const maxY = Math.max(...events.map(e => Math.abs(e.y)), 1) * 1.15;
     const maxZ = Math.max(...events.map(e => e.z), 1) * 1.1;
+
+    // Y axis (Tensión): auto-range fitted to the data min/max ± 20% margin of
+    // the voltage span, so the real variation fills the cube instead of the
+    // axis starting at 0 V.
+    const yValues = events.map(e => e.y).filter(v => Number.isFinite(v));
+    let yMin = yValues.length ? Math.min(...yValues) : 0;
+    let yMax = yValues.length ? Math.max(...yValues) : 240;
+    if (yMax - yMin < 1e-9) {
+      // Constant voltage: symmetric margin around the single measured value
+      const pad = Math.max(Math.abs(yMax) * 0.1, 5);
+      yMin -= pad;
+      yMax += pad;
+    } else {
+      const pad = (yMax - yMin) * 0.2;
+      yMin -= pad;
+      yMax += pad;
+    }
+    const ySpan = yMax - yMin;
+    const normY = (y        ) => (y - yMin) / ySpan;
 
     const originX = width * 0.44;
     const originY = height * 0.84;
@@ -269,14 +287,16 @@ class ChartEngine {
       };
     });
 
-    function project3D(x        , y        , z        ) {
+    // All inputs are normalized cube coordinates (0..1):
+    //   x01 = corriente / maxX, y01 = normY(tensión), z01 = tiempo / maxZ
+    function project3D(x01        , y01        , z01        ) {
       const yawCos = Math.cos(state.yaw);
       const yawSin = Math.sin(state.yaw);
-      const rotatedX = x * yawCos - y * yawSin;
-      const depth = x * yawSin + y * yawCos;
-      const scale = 1.0 - (depth / maxY) * 0.18;
-      const px = originX + ((rotatedX / maxX) * xLen) - ((depth / maxY) * yLen * 0.72);
-      const py = originY - ((z / maxZ) * zLen) - ((depth / maxY) * yLen * 0.38);
+      const rotatedX = x01 * yawCos - y01 * yawSin;
+      const depth = x01 * yawSin + y01 * yawCos;
+      const scale = 1.0 - depth * 0.18;
+      const px = originX + (rotatedX * xLen) - (depth * yLen * 0.72);
+      const py = originY - (z01 * zLen) - (depth * yLen * 0.38);
       return { x: px, y: py, scale };
     }
 
@@ -301,7 +321,7 @@ class ChartEngine {
 
       for (let i = 1; i <= 4; i++) {
         const ratio = i / 4;
-        const x = project3D(maxX * ratio, 0, 0);
+        const x = project3D(ratio, 0, 0);
         ctx.beginPath();
         ctx.moveTo(x.x, x.y - 4);
         ctx.lineTo(x.x, x.y + 4);
@@ -309,15 +329,15 @@ class ChartEngine {
         ctx.textAlign = 'center';
         ctx.fillText(`${(maxX * ratio).toFixed(1)} A`, x.x, x.y + 18);
 
-        const y = project3D(0, maxY * ratio, 0);
+        const y = project3D(0, ratio, 0);
         ctx.beginPath();
         ctx.moveTo(y.x - 4, y.y - 2);
         ctx.lineTo(y.x + 4, y.y + 2);
         ctx.stroke();
         ctx.textAlign = 'left';
-        ctx.fillText(`${(maxY * ratio).toFixed(0)} V`, y.x + 8, y.y + 3);
+        ctx.fillText(`${(yMin + ySpan * ratio).toFixed(1)} V`, y.x + 8, y.y + 3);
 
-        const z = project3D(0, 0, maxZ * ratio);
+        const z = project3D(0, 0, ratio);
         ctx.beginPath();
         ctx.moveTo(z.x - 4, z.y);
         ctx.lineTo(z.x + 4, z.y);
@@ -325,6 +345,11 @@ class ChartEngine {
         ctx.textAlign = 'right';
         ctx.fillText(`${(maxZ * ratio).toFixed(0)} min`, z.x - 8, z.y + 4);
       }
+
+      // Voltage minimum label at the origin of the Y axis (auto-ranged)
+      const yOrigin = project3D(0, 0, 0);
+      ctx.textAlign = 'left';
+      ctx.fillText(`${yMin.toFixed(1)} V`, yOrigin.x + 8, yOrigin.y + 3);
     }
 
     function drawLegend() {
@@ -385,9 +410,9 @@ class ChartEngine {
       drawLegend();
 
       const root = project3D(0, 0, 0);
-      const xAxisEnd = project3D(maxX, 0, 0);
-      const yAxisEnd = project3D(0, maxY, 0);
-      const zAxisEnd = project3D(0, 0, maxZ);
+      const xAxisEnd = project3D(1, 0, 0);
+      const yAxisEnd = project3D(0, 1, 0);
+      const zAxisEnd = project3D(0, 0, 1);
 
       ctx.strokeStyle = chartColor('--chart-grid', '#A0A0A0');
       ctx.lineWidth = 1.4;
@@ -401,8 +426,8 @@ class ChartEngine {
       ctx.stroke();
 
       const cube = [
-        [0, 0, 0], [maxX, 0, 0], [0, maxY, 0], [maxX, maxY, 0],
-        [0, 0, maxZ], [maxX, 0, maxZ], [0, maxY, maxZ], [maxX, maxY, maxZ]
+        [0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0],
+        [0, 0, 1], [1, 0, 1], [0, 1, 1], [1, 1, 1]
       ];
 
       const edges = [
@@ -416,9 +441,9 @@ class ChartEngine {
 
       for (let i = 1; i <= 4; i++) {
         const q = i / 4;
-        drawGridLine(0, 0, maxZ * q, maxX, 0, maxZ * q, 'rgba(148, 163, 184, 0.12)');
-        drawGridLine(0, maxY * q, 0, 0, maxY * q, maxZ, 'rgba(148, 163, 184, 0.12)');
-        drawGridLine(maxX * q, 0, 0, maxX * q, maxY, 0, 'rgba(148, 163, 184, 0.12)');
+        drawGridLine(0, 0, q, 1, 0, q, 'rgba(148, 163, 184, 0.12)');
+        drawGridLine(0, q, 0, 0, q, 1, 'rgba(148, 163, 184, 0.12)');
+        drawGridLine(q, 0, 0, q, 1, 0, 'rgba(148, 163, 184, 0.12)');
       }
 
       ctx.fillStyle = chartColor('--chart-text', '#CBD5E1');
@@ -433,7 +458,7 @@ class ChartEngine {
       ctx.restore();
 
       const projectedPoints = events.map((ev, idx) => {
-        const p = project3D(ev.x, ev.y, ev.z);
+        const p = project3D(ev.x / maxX, normY(ev.y), ev.z / maxZ);
         return { ...ev, idx, px: p.x, py: p.y, scale: p.scale };
       }).filter(ev => !state.hiddenClusters.has(ev.cluster));
 
@@ -491,7 +516,7 @@ class ChartEngine {
       let bestDist = Infinity;
       events.forEach((ev, idx) => {
         if (state.hiddenClusters.has(ev.cluster)) return;
-        const p = project3D(ev.x, ev.y, ev.z);
+        const p = project3D(ev.x / maxX, normY(ev.y), ev.z / maxZ);
         const dist = Math.hypot(mx - p.x, my - p.y);
         if (dist < 12 && dist < bestDist) {
           bestDist = dist;

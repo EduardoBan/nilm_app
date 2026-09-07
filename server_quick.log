@@ -1,8 +1,0 @@
-API_STATUS=200
-DATASETS= ['coop_gouge_v2_10_abril', 'coop_gouge_v2_11_abril', 'coop_gouge_v2_15_abril', 'coop_gouge_v2_17_abril']
-LABELS_STATUS=200
-LABELS= {}
-FRONTEND_STATUS=200
-HAS_FHMM_CHECKBOX= True
-HAS_BUNDLE_VERSION= True
-QUICK_CHECK_DONE
