@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NILM Energy Analytics - Desagregación y Monitoreo de Cargas Eléctricas</title>
+  <link rel="stylesheet" href="css/styles.css?v=inti-20260904-theme">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-brand">
+      <div class="logo-badge">⚡</div>
+      <div class="brand-titles">
+        <h1>NILM Energy Analytics Platform</h1>
+        <p>Monitoreo No Intrusivo de Cargas y Desagregación Inteligente con Machine Learning</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <div class="header-status">
+        <div class="status-dot"></div>
+        <span>Servidor Python / Cliente TypeScript Online</span>
+      </div>
+      <label class="theme-switcher" for="theme-select">
+        <span>Paleta</span>
+        <select id="theme-select" class="theme-select" aria-label="Seleccionar paleta de color">
+          <option value="dark">Oscura</option>
+          <option value="light">Clara</option>
+        </select>
+      </label>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-container">
+
+    <!-- Control Bar -->
+    <section class="control-bar">
+      <div class="control-group">
+        <label for="dataset-select">📂 Archivo / Medición:</label>
+        <select id="dataset-select" class="select-input">
+          <option value="coop_gouge_v2_10_abril">Cargando mediciones...</option>
+        </select>
+      </div>
+
+      <div class="control-group">
+        <label for="select-algo">🤖 Algoritmo IA:</label>
+        <select id="select-algo" class="select-input">
+          <option value="kmeans" selected>K-Means Clustering</option>
+          <option value="gmm">Gaussian Mixture Models (GMM)</option>
+          <option value="dbscan">DBSCAN (Densidad / Outliers)</option>
+        </select>
+      </div>
+
+      <div class="control-group">
+        <label for="slider-clusters">🔢 N° Equipos (K):</label>
+        <div class="slider-wrap">
+          <input type="range" id="slider-clusters" min="2" max="6" value="4" step="1">
+          <span id="val-clusters" class="slider-val">4</span>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <label for="slider-threshold">⚡ Umbral ΔI:</label>
+        <div class="slider-wrap">
+          <input type="range" id="slider-threshold" min="0.5" max="10.0" value="2.0" step="0.5">
+          <span id="val-threshold" class="slider-val">2.0 A</span>
+        </div>
+      </div>
+
+      <button id="btn-run-analysis" class="btn-primary">
+        <span>⚙️ Ejecutar Análisis NILM</span>
+      </button>
+    </section>
+
+    <!-- KPI Summary Grid -->
+    <section class="kpi-grid">
+      <div class="kpi-card blue">
+        <span class="kpi-title">Energía Total Consumida</span>
+        <span id="kpi-energy" class="kpi-value">-- kWh</span>
+        <span class="kpi-subtitle">Integración de potencia activa en el día</span>
+      </div>
+
+      <div class="kpi-card yellow">
+        <span class="kpi-title">Potencia Pico Medida</span>
+        <span id="kpi-peak" class="kpi-value">-- kW</span>
+        <span class="kpi-subtitle">Demanda máxima registrada</span>
+      </div>
+
+      <div class="kpi-card green">
+        <span class="kpi-title">Potencia Media</span>
+        <span id="kpi-avg-p" class="kpi-value">-- kW</span>
+        <span class="kpi-subtitle">Carga promedio de operación</span>
+      </div>
+
+      <div class="kpi-card purple">
+        <span class="kpi-title">Factor de Potencia</span>
+        <span id="kpi-pf" class="kpi-value">--</span>
+        <span class="kpi-subtitle">cos(φ) promedio de la instalación</span>
+      </div>
+
+      <div class="kpi-card cyan">
+        <span class="kpi-title">Equipos Identificados</span>
+        <span id="kpi-machines" class="kpi-value">-- Cargas</span>
+        <span class="kpi-subtitle">Clústeres IA clasificados</span>
+      </div>
+
+      <div class="kpi-card red">
+        <span class="kpi-title">Eventos Transitorios</span>
+        <span id="kpi-events" class="kpi-value">--</span>
+        <span class="kpi-subtitle">Maniobras de arranque / parada</span>
+      </div>
+    </section>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs-container">
+      <button class="nav-tab active" data-tab="overview">📈 Curvas y Desagregación</button>
+      <button class="nav-tab" data-tab="machines">🏭 Equipos Detectados</button>
+      <button class="nav-tab" data-tab="timeline">⏱️ Línea de Tiempo (Gantt)</button>
+      <button class="nav-tab" data-tab="features3d">🧊 Nube 3D de Actividad</button>
+      <button class="nav-tab" data-tab="features2d">🔬 Espacios de Características</button>
+      <button class="nav-tab" data-tab="hourly">📊 Distribución Horaria 24h</button>
+      <button class="nav-tab" data-tab="quality">⚡ Calidad de Red y Armónicos</button>
+    </nav>
+
+    <!-- Tab 1: Overview & Disaggregated Power Curves -->
+    <section id="tab-overview" class="tab-content active">
+      <div class="two-col-grid">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">📉 Desagregación de Potencia por Equipo (NILM)</h2>
+              <p class="card-subtitle">Evolución temporal de la potencia total medida y las curvas individuales desagregadas</p>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="chart-main-power"></canvas>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">🥧 Reparto Energético (%)</h2>
+              <p class="card-subtitle">Participación de cada máquina en el consumo total diario</p>
+            </div>
+          </div>
+          <div class="chart-container" style="display:flex; justify-content:center; align-items:center;">
+            <canvas id="chart-energy-donut"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Appliances Summary Table -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">📋 Resumen de Equipos y Cargas Identificadas</h2>
+            <p class="card-subtitle">Estimación de potencias nominales, corrientes transitorias, tiempo de uso y energía consumida</p>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Equipo Identificado</th>
+                <th>Categoría / Tipo</th>
+                <th>Potencia Estimada</th>
+                <th>Salto Corriente (ΔI)</th>
+                <th>THD Armónico</th>
+                <th>N° Arranques</th>
+                <th>Tiempo de Uso</th>
+                <th>Consumo (kWh)</th>
+                <th>% Participación</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody id="appliances-table-body">
+              <tr><td colspan="10" style="text-align:center; padding: 20px;">Cargando análisis NILM...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 2: Machine Cards -->
+    <section id="tab-machines" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">🏭 Fichas Técnicas de Equipos Identificados</h2>
+            <p class="card-subtitle">Parámetros eléctricos característicos deducidos por el modelo de IA</p>
+          </div>
+        </div>
+        <div id="machines-cards-container" class="machines-grid"></div>
+      </div>
+    </section>
+
+    <!-- Tab 3: Operational Timeline (Gantt) -->
+    <section id="tab-timeline" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">⏱️ Diagrama de Gantt Operacional - Estado ON/OFF por Máquina</h2>
+            <p class="card-subtitle">Reconstrucción de los intervalos de funcionamiento continuo a lo largo del día (00:00 a 24:00)</p>
+          </div>
+        </div>
+        <div id="gantt-container"></div>
+      </div>
+    </section>
+
+    <!-- Tab 4: 3D Activity Cloud -->
+    <section id="tab-features3d" class="tab-content">
+      <div class="card" style="margin-bottom: 20px;">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">🧊 Espacio 3D de Actividad: Tensión / Corriente / Tiempo</h2>
+            <p class="card-subtitle">Agrupación de eventos por actividad con la tensión en el eje Y, la corriente en X y el tiempo en Z vertical</p>
+          </div>
+          <div class="view-controls" role="group" aria-label="Vistas del gráfico 3D">
+            <button type="button" class="view-button active" data-3d-view="xy">XY</button>
+            <button type="button" class="view-button" data-3d-view="yz">YZ</button>
+            <button type="button" class="view-button" data-3d-view="zx">ZX</button>
+          </div>
+        </div>
+        <div class="chart-container" style="height: 880px;">
+          <canvas id="chart-activity-3d"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 5: AI Feature Spaces -->
+    <section id="tab-features2d" class="tab-content">
+      <div class="split-grid">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">🎯 Espacio de Potencias: ΔP vs ΔQ</h2>
+              <p class="card-subtitle">Separación de clústeres por salto de potencia activa y reactiva</p>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="chart-scatter-pq"></canvas>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">⚡ Espacio de Firma Eléctrica: ΔI vs THD</h2>
+              <p class="card-subtitle">Clasificación por magnitud de corriente y distorsión armónica</p>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="chart-scatter-ithd"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 5: Hourly Activity Distribution -->
+    <section id="tab-hourly" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">⏰ Actividad y Arranques por Hora del Día (00:00 - 23:00)</h2>
+            <p class="card-subtitle">Detección de patrones de operación por turno laboral y horas pico</p>
+          </div>
+        </div>
+        <div class="chart-container">
+          <canvas id="chart-hourly-activity"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 6: Power Quality & Harmonics -->
+    <section id="tab-quality" class="tab-content">
+      <div class="split-grid">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">🌊 Corrientes Trifásicas (L1, L2, L3) [A]</h2>
+              <p class="card-subtitle">Balance de cargas entre las tres fases del sistema</p>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="chart-phase-currents"></canvas>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">⚡ Tensiones Trifásicas (U L1, L2, L3) [V]</h2>
+              <p class="card-subtitle">Estabilidad de voltaje y caídas de tensión</p>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="chart-phase-voltages"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">🎼 Espectro de Armónicos de Corriente (Fundamental hasta H25)</h2>
+            <p class="card-subtitle">Contenido armónico medio para diagnóstico de variadores y cargas no lineales</p>
+          </div>
+        </div>
+        <div class="chart-container">
+          <canvas id="chart-harmonics-spectrum"></canvas>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="app-footer">
+    <p>NILM Analytics System &copy; 2025 - Analizador de Energía Sonel PQM-711 | Cliente TypeScript &amp; Servidor Python</p>
+  </footer>
+
+  <!-- Loading Overlay -->
+  <div id="loading-overlay" class="loading-overlay">
+    <div class="spinner"></div>
+    <div class="loading-text">Procesando señales eléctricas y ejecutando IA...</div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast"></div>
+
+  <!-- Compiled TypeScript Application Bundle -->
+  <script src="dist/bundle.js?v=themes-20260904-3d-orthographic"></script>
+</body>
+</html>
