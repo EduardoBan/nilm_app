@@ -1,5 +1,6 @@
 import os
 import glob
+import json
 import time
 import pandas as pd
 import numpy as np
@@ -44,6 +45,49 @@ class DataManager:
     def get_slug(self, filename: str) -> str:
         base = os.path.basename(filename)
         return base.replace(".xlsx", "").replace(".xls", "").replace(".csv", "").replace(" ", "_").lower()
+
+    # ------------------------------------------------------------------
+    # Manual Ground-Truth appliance labels (Opción A - Punto 2)
+    # Persisted per dataset + cluster id in backend/load_labels.json so the
+    # user's custom equipment names survive restarts and re-analyses.
+    # ------------------------------------------------------------------
+    def _labels_file(self) -> str:
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), "load_labels.json")
+
+    def _read_labels(self) -> dict:
+        try:
+            with open(self._labels_file(), "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _write_labels(self, data: dict) -> None:
+        try:
+            with open(self._labels_file(), "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
+    def get_labels(self, dataset_id: str) -> dict:
+        """Returns {cluster_id: custom_name} for the given dataset."""
+        return dict(self._read_labels().get(dataset_id, {}))
+
+    def set_label(self, dataset_id: str, cluster_id: int, name: str) -> dict:
+        """Stores (or clears, when name is empty) a custom appliance label."""
+        data = self._read_labels()
+        bucket = data.get(dataset_id, {})
+        clean = (name or "").strip()
+        if clean:
+            bucket[str(int(cluster_id))] = clean
+        else:
+            bucket.pop(str(int(cluster_id)), None)
+        if bucket:
+            data[dataset_id] = bucket
+        else:
+            data.pop(dataset_id, None)
+        self._write_labels(data)
+        return dict(bucket)
 
     def list_datasets(self):
         files = sorted(glob.glob(os.path.join(self.data_dir, "*.xlsx")) + glob.glob(os.path.join(self.data_dir, "*.csv")))

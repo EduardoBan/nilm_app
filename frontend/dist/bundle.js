@@ -1144,6 +1144,28 @@ class NILMApiService {
     const json = await res.json();
     return json.data;
   }
+
+  /** Manual Ground-Truth labels: {cluster_id: custom_name} for a dataset */
+  async getLabels(datasetId        )                                  {
+    const res = await fetch(`${this.baseUrl}/api/labels?dataset_id=${encodeURIComponent(datasetId)}`);
+    if (!res.ok) throw new Error(`Error fetching labels: ${res.statusText}`);
+    const json = await res.json();
+    return json.data.labels || {};
+  }
+
+  /** Saves (or clears when name is empty) a custom appliance label */
+  async saveLabel(datasetId        , clusterId        , name        )                                  {
+    const res = await fetch(`${this.baseUrl}/api/labels`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataset_id: datasetId, cluster_id: clusterId, name })
+    });
+    const json = await res.json();
+    if (!res.ok || json.status !== 'success') {
+      throw new Error(json.message || `Error guardando etiqueta: ${res.statusText}`);
+    }
+    return json.data.labels || {};
+  }
 }
 
 const api = new NILMApiService();
@@ -1167,6 +1189,8 @@ class NILMApp {
           harmonics                       = null;
           analysis                            = null;
           activeTab            = 'overview';
+  /* Opción A: modelado multi-estado FHMM (persistido entre sesiones) */
+          useFhmm          = (localStorage.getItem('nilm-fhmm') ?? 'on') !== 'off';
 
           chartCleanups                    = [];
 
@@ -1192,7 +1216,7 @@ class NILMApp {
 
           setupEventListeners() {
     // Dataset dropdown selector
-    const selectDs = document.getElementById('select-dataset');
+    const selectDs = document.getElementById('select-dataset')                     ;
     selectDs?.addEventListener('change', async () => {
       if (selectDs.value && selectDs.value !== this.currentDatasetId) {
         this.currentDatasetId = selectDs.value;
@@ -1226,6 +1250,17 @@ class NILMApp {
     thresholdSlider?.addEventListener('input', () => {
       if (thresholdVal) thresholdVal.textContent = `${thresholdSlider.value} A`;
     });
+
+    // Opción A: Multi-state FHMM modeling toggle
+    const fhmmCheck = document.getElementById('chk-fhmm')                    ;
+    if (fhmmCheck) {
+      fhmmCheck.checked = this.useFhmm;
+      fhmmCheck.addEventListener('change', () => {
+        this.useFhmm = fhmmCheck.checked;
+        localStorage.setItem('nilm-fhmm', this.useFhmm ? 'on' : 'off');
+        this.runNILMAnalysis();
+      });
+    }
 
     // Tabs
     const tabButtons = document.querySelectorAll('.nav-tab');
@@ -1293,7 +1328,7 @@ class NILMApp {
   }
 
           updateDatasetSelect() {
-    const selectDs = document.getElementById('select-dataset');
+    const selectDs = document.getElementById('select-dataset')                     ;
     if (!selectDs) return;
     selectDs.innerHTML = '';
     this.datasets.forEach(d => {
@@ -1385,12 +1420,15 @@ class NILMApp {
         n_clusters,
         algorithm,
         current_threshold,
-        power_threshold: 1.0
+        power_threshold: 1.0,
+        use_fhmm: this.useFhmm,
+        max_states: 3
       });
 
       this.updateApplianceTable();
       this.renderCurrentTabCharts();
-      this.showToast(`Análisis NILM completado (${this.analysis.total_events_detected} eventos clasificados)`, 'success');
+      const mode = this.analysis.fhmm_enabled ? 'FHMM multi-estado' : 'ON/OFF binario';
+      this.showToast(`Análisis NILM completado (${this.analysis.total_events_detected} eventos · modo ${mode})`, 'success');
     } catch (err     ) {
       console.error(err);
       this.showToast(`Error ejecutando análisis NILM: ${err.message}`, 'error');
@@ -1426,9 +1464,12 @@ class NILMApp {
 
     this.analysis.machine_statistics.forEach(m => {
       const tr = document.createElement('tr');
+      const loadBadge = m.load_class
+        ? `<span class="load-badge load-${m.load_family || 'inductiva'}">${m.load_icon || '⚙️'} ${m.load_class}</span>`
+        : `<span class="badge-cat">${m.category}</span>`;
       tr.innerHTML = `
-        <td><span class="badge-color" style="background:${m.color}"></span> <strong>${m.name}</strong></td>
-        <td><span class="badge-cat">${m.category}</span></td>
+        <td><span class="badge-color" style="background:${m.color}"></span> <strong class="editable-name" data-machine="${m.id}" title="Click en ✏️ para renombrar (Ground Truth)">${m.name}</strong> <button class="edit-btn" data-edit="${m.id}" title="Renombrar equipo (Ground Truth)">✏️</button>${m.custom_label ? ' <span class="gt-flag" title="Etiqueta personalizada guardada">GT</span>' : ''}</td>
+        <td>${loadBadge}</td>
         <td><strong>${m.nominal_power_kw.toFixed(1)} kW</strong></td>
         <td>${m.peak_current_a.toFixed(1)} A</td>
         <td>${m.thd_pct.toFixed(1)} %</td>
@@ -1446,11 +1487,92 @@ class NILMApp {
       tbody.appendChild(tr);
     });
 
+    // Bind Ground-Truth rename buttons (Opción A - Punto 2)
+    tbody.querySelectorAll                   ('button.edit-btn').forEach(btn => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const id = parseInt(btn.dataset['edit'] || '0', 10);
+        const nameSpan = tbody.querySelector             (`.editable-name[data-machine="${id}"]`);
+        if (nameSpan) this.startRename(id, nameSpan);
+      });
+    });
+
     const kpiMachines = document.getElementById('kpi-machines');
     if (kpiMachines) kpiMachines.textContent = `${this.analysis.machine_statistics.length} Cargas`;
 
     const kpiEvents = document.getElementById('kpi-events');
     if (kpiEvents) kpiEvents.textContent = `${this.analysis.total_events_detected}`;
+  }
+
+  /**
+   * Opción A - Punto 2: inline Ground-Truth renaming.
+   * Replaces the machine name with an input; Enter/blur saves the custom
+   * label (persisted server-side), Escape cancels.
+   */
+          startRename(machineId        , host             ) {
+    if (!this.analysis) return;
+    const stat = this.analysis.machine_statistics.find(m => m.id === machineId);
+    if (!stat) return;
+    const original = stat.name;
+
+    host.innerHTML = '';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'rename-input';
+    input.value = original;
+    input.title = 'Enter: guardar · Esc: cancelar';
+    host.appendChild(input);
+    input.focus();
+    input.select();
+
+    let done = false;
+    const finish = (commit         ) => {
+      if (done) return;
+      done = true;
+      const newName = input.value.trim();
+      if (!commit || !newName || newName === original) {
+        this.updateApplianceTable();
+        this.renderCurrentTabCharts();
+        return;
+      }
+      api.saveLabel(this.currentDatasetId, machineId, newName)
+        .then(() => {
+          this.applyNameOverride(machineId, newName);
+          this.showToast(`Etiqueta guardada: "${newName}" (Ground Truth persistido)`, 'success');
+        })
+        .catch((err     ) => {
+          console.error(err);
+          this.showToast(`Error guardando etiqueta: ${err.message}`, 'error');
+          this.updateApplianceTable();
+          this.renderCurrentTabCharts();
+        });
+    };
+
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); finish(true); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); finish(false); }
+    });
+    input.addEventListener('blur', () => finish(true));
+  }
+
+  /** Applies a custom name to every structure that references the machine */
+          applyNameOverride(machineId        , newName        ) {
+    if (!this.analysis) return;
+    this.analysis.machine_statistics.forEach(m => {
+      if (m.id === machineId) { m.name = newName; m.custom_label = true; }
+    });
+    this.analysis.disaggregated_machines.forEach(d => {
+      if (d.id === machineId) d.name = newName;
+    });
+    this.analysis.timeline_intervals.forEach(t => {
+      if (t.machine_id === machineId) t.machine_name = newName;
+    });
+    this.analysis.scatter_events.forEach(e => {
+      if (e.cluster === machineId) e.machine_name = newName;
+    });
+    this.updateApplianceTable();
+    this.renderMachinesTab();
+    this.renderCurrentTabCharts();
   }
 
           clearChartCleanups() {
@@ -1529,14 +1651,42 @@ class NILMApp {
       const card = document.createElement('div');
       card.className = 'machine-card';
       card.style.borderLeft = `5px solid ${m.color}`;
+
+      const loadBadge = m.load_class
+        ? `<span class="load-badge load-${m.load_family || 'inductiva'}" title="Clasificación por armónicos transitorios (ΔIh/ΔI₁ = ${(m.harmonic_signature_pct ?? 0).toFixed(0)}% · ΔQ/ΔP = ${(m.q_p_ratio ?? 0).toFixed(2)})">${m.load_icon || '⚙️'} ${m.load_class}</span>`
+        : `<span class="load-badge load-inductiva" title="${m.category}">⚙️ ${m.category}</span>`;
+
+      const fhmmFlag = (m.n_states ?? 2) > 2
+        ? `<span class="ms-flag" title="Modelo multi-estado FHMM con estados intermedios">FHMM · ${m.n_states} estados</span>`
+        : '';
+
+      // Opción A - Punto 1: FHMM operating-state breakdown (non-OFF states)
+      let statesHtml = '';
+      if (this.useFhmm && m.states && m.states.length > 0) {
+        const activeStates = m.states.filter(s => s.kw > 0);
+        if (activeStates.length > 0) {
+          statesHtml = `
+            <div class="mc-states">
+              <span class="mc-states-title">Estados de Operación (FHMM)</span>
+              ${activeStates.map(s => `
+                <div class="state-row">
+                  <span class="state-name" title="${s.name}">${s.name}</span>
+                  <span class="state-bar"><span style="width:${Math.max(4, Math.min(100, s.share_pct))}%; background:${m.color}"></span></span>
+                  <span class="state-val">${s.kw.toFixed(1)} kW · ${s.minutes.toFixed(0)} min · ${s.energy_kwh.toFixed(2)} kWh</span>
+                </div>`).join('')}
+            </div>`;
+        }
+      }
+
       card.innerHTML = `
         <div class="mc-header">
           <div>
-            <h3 style="color:${m.color}">${m.name}</h3>
+            <h3 style="color:${m.color}"><span class="editable-name" data-machine="${m.id}">${m.name}</span> <button class="edit-btn" data-edit="${m.id}" title="Renombrar equipo (Ground Truth)">✏️</button>${m.custom_label ? ' <span class="gt-flag" title="Etiqueta personalizada guardada">GT</span>' : ''}</h3>
             <span class="mc-category">${m.category}</span>
           </div>
           <span class="mc-status badge-status status-active">${m.status}</span>
         </div>
+        <div class="mc-loadrow">${loadBadge}${fhmmFlag}</div>
         <div class="mc-grid">
           <div class="mc-stat">
             <span class="mc-stat-label">Potencia Nominal</span>
@@ -1551,6 +1701,10 @@ class NILMApp {
             <span class="mc-stat-val">${m.thd_pct.toFixed(1)} %</span>
           </div>
           <div class="mc-stat">
+            <span class="mc-stat-label">Firma Armónica ΔIh/ΔI₁</span>
+            <span class="mc-stat-val">${(m.harmonic_signature_pct ?? 0).toFixed(0)} %</span>
+          </div>
+          <div class="mc-stat">
             <span class="mc-stat-label">Total Arranques</span>
             <span class="mc-stat-val">${m.event_count}</span>
           </div>
@@ -1563,8 +1717,19 @@ class NILMApp {
             <span class="mc-stat-val">${m.energy_kwh.toFixed(2)} kWh (${m.energy_share_pct.toFixed(1)}%)</span>
           </div>
         </div>
+        ${statesHtml}
       `;
       container.appendChild(card);
+    });
+
+    // Bind Ground-Truth rename buttons (Opción A - Punto 2)
+    container.querySelectorAll                   ('button.edit-btn').forEach(btn => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const id = parseInt(btn.dataset['edit'] || '0', 10);
+        const nameSpan = btn.closest('h3')?.querySelector             ('.editable-name');
+        if (nameSpan) this.startRename(id, nameSpan);
+      });
     });
   }
 

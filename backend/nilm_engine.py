@@ -157,18 +157,18 @@ class NILMEngine:
 
         if algorithm.lower() == 'gmm':
             model = GaussianMixture(n_components=effective_k, random_state=42, max_iter=200)
-            labels = model.fit_predict(X_scaled)
+            cluster_labels = model.fit_predict(X_scaled)
         elif algorithm.lower() == 'dbscan':
             model = DBSCAN(eps=0.75, min_samples=4)
-            labels = model.fit_predict(X_scaled)
-            unique_labels = sorted(list(set(labels)))
+            cluster_labels = model.fit_predict(X_scaled)
+            unique_labels = sorted(list(set(cluster_labels)))
             label_map = {l: i for i, l in enumerate(unique_labels)}
-            labels = np.array([label_map[l] for l in labels])
+            cluster_labels = np.array([label_map[l] for l in cluster_labels])
         else: # Default KMeans
             model = KMeans(n_clusters=effective_k, random_state=42, n_init=10)
-            labels = model.fit_predict(X_scaled)
+            cluster_labels = model.fit_predict(X_scaled)
 
-        events['cluster'] = labels
+        events['cluster'] = cluster_labels
 
         colors = [
             "#3B82F6", "#10B981", "#F59E0B", "#EF4444", 
@@ -381,6 +381,242 @@ class NILMEngine:
             }
         return machine_states
 
+    def disaggregate_load_fhmm(self, df_work: pd.DataFrame,
+                               events: pd.DataFrame,
+                               cluster_info: Dict[int, Any],
+                               machine_states: Dict[int, Dict[str, Any]],
+                               switch_cost: float = 20.0):
+        """
+        Factorial Hidden Markov Model (FHMM) disaggregation.
+        (Opción A - Punto 1: Modelado Multi-Estado FHMM/HMM)
+
+        The aggregate measurement is modeled as the superposition (sum) of the
+        hidden state of every appliance plus a background baseline:
+
+            P_total(t) ≈ P_base + Σ_c  level_c(state_c(t))
+
+        MAP inference is approximated with tractable event-driven coordinate
+        descent: signal segmentation at detected events, greedy forward
+        initialization, and block-coordinate Viterbi refinement per appliance
+        (Gaussian emissions around each power level + switching cost).
+
+        Returns (disagg_power, baseline_curve, timeline_events, machine_stats, fhmm_models)
+        """
+        n_points = len(df_work)
+        timestamps = pd.to_datetime(df_work['timestamp']).to_numpy(dtype='datetime64[ns]')
+        p_total = df_work['P_total'].values.astype(float)
+
+        clusters = sorted([c for c in cluster_info.keys() if c in machine_states])
+        levels = {c: machine_states[c]['levels'] for c in clusters}
+        base_power = float(np.percentile(p_total, 5))
+
+        disagg_power = {c: np.zeros(n_points, dtype=np.float32) for c in clusters}
+
+        # --- Event-driven segmentation: hidden states only change at events ---
+        ev_times = pd.to_datetime(events['timestamp']).to_numpy(dtype='datetime64[ns]')
+        bounds = np.unique(np.searchsorted(timestamps, ev_times))
+        bounds = bounds[bounds < n_points]
+        seg_starts = np.concatenate(([0], bounds)).astype(int)
+        seg_ends = np.concatenate((bounds, [n_points])).astype(int)
+        n_segments = len(seg_starts)
+
+        seg_obs = np.zeros(n_segments)
+        seg_len = np.zeros(n_segments)
+        for j in range(n_segments):
+            chunk = p_total[seg_starts[j]:seg_ends[j]]
+            if len(chunk) > 0:
+                seg_obs[j] = float(np.median(chunk))
+                seg_len[j] = float(len(chunk))
+
+        # Decision points per machine: segment index where each of its events
+        # takes effect (the segment that starts right after the boundary).
+        decisions: Dict[int, List[int]] = {c: [] for c in clusters}
+        for _, ev in events.iterrows():
+            c = ev['cluster']
+            if c not in decisions:
+                continue
+            ev_time = np.datetime64(pd.Timestamp(ev['timestamp']).to_datetime64(), 'ns')
+            idx = int(np.searchsorted(timestamps, ev_time))
+            k = int(np.searchsorted(bounds, idx, side='left'))
+            decisions[c].append(min(k + 1, n_segments - 1))
+        for c in clusters:
+            decisions[c] = sorted(set(decisions[c]))
+
+        seg_state = {c: np.zeros(n_segments, dtype=int) for c in clusters}
+
+        def sum_others(c: int, seg: int) -> float:
+            return float(sum(levels[cc][seg_state[cc][seg]] for cc in clusters if cc != c))
+
+        def next_decision(c: int, seg: int) -> int:
+            for s in decisions[c]:
+                if s > seg:
+                    return s
+            return n_segments
+
+        # --- Greedy forward initialization ---
+        chrono = sorted((s, c) for c in clusters for s in decisions[c])
+        cur_state = {c: 0 for c in clusters}
+        for seg, c in chrono:
+            current = cur_state[c]
+            best_l, best_cost = current, float('inf')
+            for l in range(len(levels[c])):
+                pred = base_power + sum_others(c, seg) + levels[c][l]
+                cost = seg_len[seg] * (seg_obs[seg] - pred) ** 2
+                if l != current:
+                    cost += switch_cost
+                if cost < best_cost:
+                    best_cost, best_l = cost, l
+            cur_state[c] = int(best_l)
+            seg_state[c][seg:next_decision(c, seg)] = best_l
+
+        # --- Block-coordinate Viterbi refinement (2 sweeps) ---
+        for _ in range(2):
+            for c in clusters:
+                if not decisions[c]:
+                    continue
+                others = np.zeros(n_segments)
+                for cc in clusters:
+                    if cc != c:
+                        others += levels[cc][seg_state[cc]]
+                residual = seg_obs - base_power - others
+
+                block_bounds = [0] + decisions[c] + [n_segments]
+                n_blocks = len(block_bounds) - 1
+                s_count = len(levels[c])
+                emit = np.zeros((n_blocks, s_count))
+                for b in range(n_blocks):
+                    b0, b1 = block_bounds[b], block_bounds[b + 1]
+                    if b1 <= b0:
+                        continue
+                    for l in range(s_count):
+                        emit[b, l] = float((seg_len[b0:b1] * (residual[b0:b1] - levels[c][l]) ** 2).sum())
+
+                # Viterbi over blocks (switch cost between consecutive blocks)
+                dp = emit[0].copy()
+                back = np.zeros((n_blocks, s_count), dtype=int)
+                for b in range(1, n_blocks):
+                    cand = dp[:, None] + np.where(
+                        np.arange(s_count)[None, :] != np.arange(s_count)[:, None],
+                        switch_cost, 0.0
+                    )
+                    back[b] = np.argmin(cand, axis=0)
+                    dp = emit[b] + cand[np.arange(s_count), back[b]]
+                path = np.zeros(n_blocks, dtype=int)
+                path[-1] = int(np.argmin(dp))
+                for b in range(n_blocks - 1, 0, -1):
+                    path[b - 1] = back[b, path[b]]
+                for b in range(n_blocks):
+                    seg_state[c][block_bounds[b]:block_bounds[b + 1]] = path[b]
+
+        # --- Reconstruct per-appliance power curves and state timeline ---
+        for c in clusters:
+            for j in range(n_segments):
+                if seg_state[c][j] > 0:
+                    disagg_power[c][seg_starts[j]:seg_ends[j]] = levels[c][seg_state[c][j]]
+
+        timeline_events: List[Dict[str, Any]] = []
+        for c in clusters:
+            info = cluster_info[c]
+            st_list = machine_states[c]['states']
+            j = 0
+            while j < n_segments:
+                l = int(seg_state[c][j])
+                j2 = j
+                while j2 + 1 < n_segments and int(seg_state[c][j2 + 1]) == l:
+                    j2 += 1
+                if l > 0:
+                    start_idx = int(seg_starts[j])
+                    end_idx = min(int(seg_ends[j2]) - 1, n_points - 1)
+                    start_dt = pd.Timestamp(timestamps[start_idx])
+                    end_dt = pd.Timestamp(timestamps[end_idx])
+                    dur_minutes = (end_dt - start_dt).total_seconds() / 60.0
+                    if dur_minutes >= 0.1:
+                        level_kw = float(levels[c][l])
+                        state_name = st_list[l]['name'] if l < len(st_list) else f"Nivel {l}"
+                        timeline_events.append({
+                            "machine_id": c,
+                            "machine_name": info['name'],
+                            "category": info['category'],
+                            "color": info['color'],
+                            "start_time": start_dt.strftime('%H:%M:%S'),
+                            "end_time": end_dt.strftime('%H:%M:%S'),
+                            "start_timestamp": str(start_dt),
+                            "end_timestamp": str(end_dt),
+                            "duration_minutes": round(dur_minutes, 1),
+                            "avg_power_kw": round(level_kw, 2),
+                            "energy_kwh": round(level_kw * (dur_minutes / 60.0), 3),
+                            "state_level": l,
+                            "state_name": state_name
+                        })
+                j = j2 + 1
+        timeline_events.sort(key=lambda t: (t['machine_id'], t['start_timestamp']))
+
+        # --- Baseline and machine metrics ---
+        sum_disagg = np.zeros(n_points)
+        for c in clusters:
+            sum_disagg += disagg_power[c]
+        baseline_curve = np.maximum(0, p_total - sum_disagg)
+
+        hours_per_sample = 10.0 / 3600.0  # 10 s sampling period
+        total_grid_energy = float(p_total.sum() * hours_per_sample)
+
+        machine_stats: List[Dict[str, Any]] = []
+        fhmm_models: Dict[int, Any] = {}
+        for c in clusters:
+            info = cluster_info[c]
+            c_power = disagg_power[c]
+            c_energy = float(c_power.sum() * hours_per_sample)
+            share_pct = (c_energy / total_grid_energy * 100.0) if total_grid_energy > 0 else 0.0
+
+            c_timeline = [t for t in timeline_events if t['machine_id'] == c]
+            total_active_mins = sum(t['duration_minutes'] for t in c_timeline)
+
+            states_summary = []
+            for si, s in enumerate(machine_states[c]['states']):
+                mask = seg_state[c] == si
+                minutes = float((seg_len[mask] * (10.0 / 60.0)).sum())
+                kw = float(levels[c][si])
+                energy = kw * minutes / 60.0
+                share_active = (minutes / total_active_mins * 100.0) if total_active_mins > 0 else 0.0
+                states_summary.append({
+                    "level": si,
+                    "name": s['name'],
+                    "kw": round(kw, 2),
+                    "minutes": round(minutes, 1),
+                    "energy_kwh": round(energy, 3),
+                    "share_pct": round(share_active, 1)
+                })
+
+            machine_stats.append({
+                "id": c,
+                "name": info['name'],
+                "category": info['category'],
+                "color": info['color'],
+                "nominal_power_kw": round(info['avg_delta_p'], 2),
+                "peak_current_a": round(info['avg_delta_i'], 2),
+                "thd_pct": round(info['avg_thd'], 1),
+                "event_count": info['count'],
+                "active_minutes": round(total_active_mins, 1),
+                "energy_kwh": round(c_energy, 2),
+                "energy_share_pct": round(share_pct, 1),
+                "status": "Activo" if total_active_mins > 0 else "Inactivo",
+                "load_class": info.get('load_class', ''),
+                "load_icon": info.get('load_icon', '⚙️'),
+                "load_family": info.get('load_family', 'inductiva'),
+                "harmonic_signature_pct": info.get('harmonic_signature_pct', 0.0),
+                "q_p_ratio": info.get('q_p_ratio', 0.0),
+                "custom_label": info.get('custom_label', False),
+                "n_states": machine_states[c]['n_states'],
+                "states": states_summary
+            })
+            fhmm_models[c] = {
+                "levels_kw": [round(float(x), 2) for x in levels[c]],
+                "n_states": machine_states[c]['n_states'],
+                "states": states_summary
+            }
+
+        return disagg_power, baseline_curve, timeline_events, machine_stats, fhmm_models
+
     def disaggregate_load(self, df_work: pd.DataFrame, 
                           events: pd.DataFrame, 
                           cluster_info: Dict[int, Any]):
@@ -445,7 +681,9 @@ class NILMEngine:
                         "end_timestamp": str(end_dt),
                         "duration_minutes": round(dur_minutes, 1),
                         "avg_power_kw": round(nominal_p, 2),
-                        "energy_kwh": round(energy_kwh, 3)
+                        "energy_kwh": round(energy_kwh, 3),
+                        "state_level": 1,
+                        "state_name": "Encendido (ON)"
                     })
 
         # Calculate baseline power curve
@@ -480,7 +718,15 @@ class NILMEngine:
                 "active_minutes": round(total_active_mins, 1),
                 "energy_kwh": round(c_energy, 2),
                 "energy_share_pct": round(share_pct, 1),
-                "status": "Activo" if total_active_mins > 0 else "Inactivo"
+                "status": "Activo" if total_active_mins > 0 else "Inactivo",
+                "load_class": info.get('load_class', ''),
+                "load_icon": info.get('load_icon', '⚙️'),
+                "load_family": info.get('load_family', 'inductiva'),
+                "harmonic_signature_pct": info.get('harmonic_signature_pct', 0.0),
+                "q_p_ratio": info.get('q_p_ratio', 0.0),
+                "custom_label": info.get('custom_label', False),
+                "n_states": 2,
+                "states": []
             })
 
         return disagg_power, baseline_curve, timeline_events, machine_stats
@@ -489,19 +735,34 @@ class NILMEngine:
                         n_clusters: int = 4, 
                         algorithm: str = "kmeans",
                         current_threshold: float = 2.0,
-                        power_threshold: float = 1.0) -> Dict[str, Any]:
+                        power_threshold: float = 1.0,
+                        use_fhmm: bool = False,
+                        max_states: int = 3,
+                        labels: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """
         Executes full NILM pipeline and returns structured JSON-ready results.
+        Supports binary (ON/OFF) disaggregation or multi-state FHMM modeling,
+        harmonic-transient load classification and manual Ground-Truth labels.
         """
         df = self.dm.load_dataset(dataset_id)
         df_work, events = self.detect_events(df, current_threshold, power_threshold)
 
         nilmtk_states = self.estimate_nilmtk_power_states(df_work)
         
-        events_clustered, cluster_info = self.cluster_appliances(events, n_clusters, algorithm)
-        disagg_power, baseline_curve, timeline, machine_stats = self.disaggregate_load(
-            df_work, events_clustered, cluster_info
-        )
+        events_clustered, cluster_info = self.cluster_appliances(events, n_clusters, algorithm, labels=labels)
+
+        fhmm_models: Dict[int, Any] = {}
+        if use_fhmm:
+            machine_states = self.estimate_machine_states(
+                events_clustered, cluster_info, max_states=max_states
+            )
+            disagg_power, baseline_curve, timeline, machine_stats, fhmm_models = self.disaggregate_load_fhmm(
+                df_work, events_clustered, cluster_info, machine_states
+            )
+        else:
+            disagg_power, baseline_curve, timeline, machine_stats = self.disaggregate_load(
+                df_work, events_clustered, cluster_info
+            )
 
         # Prepare 24h Hourly Activity Heatmap
         hourly_distribution = []
@@ -556,6 +817,9 @@ class NILMEngine:
             "algorithm": algorithm,
             "nilmtk_available": self.nilmtk_available,
             "nilmtk_power_states_kw": [round(state, 2) for state in nilmtk_states],
+            "fhmm_enabled": bool(use_fhmm),
+            "max_states": int(max_states),
+            "multi_state_models": {str(k): v for k, v in fhmm_models.items()},
             "n_clusters": n_clusters,
             "total_events_detected": len(events_clustered),
             "timestamps": timestamps_sampled,

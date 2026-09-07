@@ -65,6 +65,13 @@
       </div>
 
       <div class="control-group">
+        <label class="check-control" for="chk-fhmm" title="Modelado Multi-Estado FHMM: detecta estados intermedios de operación (ej. compresor en carga / vacío / apagado) mediante HMM factorial">
+          <input type="checkbox" id="chk-fhmm" checked>
+          <span>🧠 Multi-Estado (FHMM)</span>
+        </label>
+      </div>
+
+      <div class="control-group">
         <label for="slider-clusters">🔢 N° Equipos (K):</label>
         <div class="slider-wrap">
           <input type="range" id="slider-clusters" min="2" max="6" value="4" step="1">
@@ -177,6 +184,7 @@
               <tr>
                 <th>Equipo Identificado</th>
                 <th>Categoría / Tipo</th>
+                <th>Tipo de Carga (Armónicos)</th>
                 <th>Potencia Estimada</th>
                 <th>Salto Corriente (ΔI)</th>
                 <th>THD Armónico</th>
@@ -188,7 +196,7 @@
               </tr>
             </thead>
             <tbody id="appliances-table-body">
-              <tr><td colspan="10" style="text-align:center; padding: 20px;">Cargando análisis NILM...</td></tr>
+              <tr><td colspan="11" style="text-align:center; padding: 20px;">Cargando análisis NILM...</td></tr>
             </tbody>
           </table>
         </div>
@@ -201,7 +209,7 @@
         <div class="card-header">
           <div>
             <h2 class="card-title">🏭 Fichas Técnicas de Equipos Identificados</h2>
-            <p class="card-subtitle">Parámetros eléctricos característicos deducidos por el modelo de IA</p>
+            <p class="card-subtitle">Parámetros eléctricos deducidos por el modelo de IA · Renombra cada equipo con ✏️ (etiqueta Ground Truth persistida) · Clasificación por armónicos transitorios</p>
           </div>
         </div>
         <div id="machines-cards-container" class="machines-grid"></div>
@@ -353,6 +361,6 @@
   <div id="toast" class="toast"></div>
 
   <!-- Compiled TypeScript Application Bundle -->
-  <script src="dist/bundle.js?v=themes-20260904-3d-orthographic"></script>
+  <script src="dist/bundle.js?v=fhmm-gt-20260907"></script>
 </body>
 </html>

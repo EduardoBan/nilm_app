@@ -63,6 +63,32 @@ export interface MachineStat {
   energy_kwh: number;
   energy_share_pct: number;
   status: 'Activo' | 'Inactivo';
+  /* Opción A: clasificación por armónicos transitorios */
+  load_class?: string;
+  load_icon?: string;
+  load_family?: 'no_lineal' | 'inductiva' | 'resistiva' | string;
+  harmonic_signature_pct?: number;
+  q_p_ratio?: number;
+  /* Opción A: Ground-Truth manual */
+  custom_label?: boolean;
+  /* Opción A: modelado multi-estado FHMM */
+  n_states?: number;
+  states?: MachineStateInfo[];
+}
+
+export interface MachineStateInfo {
+  level: number;
+  name: string;
+  kw: number;
+  minutes: number;
+  energy_kwh: number;
+  share_pct: number;
+}
+
+export interface MultiStateModel {
+  levels_kw: number[];
+  n_states: number;
+  states: MachineStateInfo[];
 }
 
 export interface TimelineInterval {
@@ -77,6 +103,9 @@ export interface TimelineInterval {
   duration_minutes: number;
   avg_power_kw: number;
   energy_kwh: number;
+  /* Opción A: estado FHMM del intervalo */
+  state_level?: number;
+  state_name?: string;
 }
 
 export interface DisaggregatedSeries {
@@ -119,6 +148,10 @@ export interface NILMAnalysisResult {
   timeline_intervals: TimelineInterval[];
   hourly_activity: HourlyActivity[];
   scatter_events: ScatterEvent[];
+  /* Opción A: modelado multi-estado FHMM */
+  fhmm_enabled?: boolean;
+  max_states?: number;
+  multi_state_models?: Record<string, MultiStateModel>;
 }
 
 export interface AnalysisParams {
@@ -127,6 +160,9 @@ export interface AnalysisParams {
   algorithm: 'kmeans' | 'gmm' | 'dbscan';
   current_threshold: number;
   power_threshold: number;
+  /* Opción A: modelado multi-estado FHMM */
+  use_fhmm: boolean;
+  max_states: number;
 }
 
 export type ActiveTab = 'overview' | 'machines' | 'timeline' | 'features3d' | 'features2d' | 'hourly' | 'quality';

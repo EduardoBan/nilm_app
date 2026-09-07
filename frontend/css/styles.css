@@ -830,3 +830,187 @@ body {
   color: var(--text-dim);
   background: var(--bg-card-sub);
 }
+
+/* ==========================================================================
+   Opción A: FHMM Multi-Estado · Ground-Truth Renombrado · Armónicos
+   ========================================================================== */
+
+/* Checkbox Multi-Estado (FHMM) en la barra de control */
+.check-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.check-control input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-blue);
+  cursor: pointer;
+}
+
+/* Botón de edición ✏️ (renombrado Ground Truth) */
+.edit-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 0.78rem;
+  padding: 2px 6px;
+  transition: all 0.15s ease;
+  vertical-align: middle;
+}
+
+.edit-btn:hover {
+  background: var(--bg-card-sub);
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+/* Entrada de renombrado en línea */
+.rename-input {
+  background: var(--bg-card-sub);
+  border: 1px solid var(--accent-blue);
+  border-radius: var(--radius-sm);
+  color: var(--text-main);
+  font-family: var(--font-family);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  width: min(260px, 100%);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 181, 226, 0.2);
+}
+
+/* Distintivo de etiqueta Ground Truth guardada */
+.gt-flag {
+  background: rgba(68, 210, 200, 0.15);
+  border: 1px solid var(--accent-green);
+  border-radius: 4px;
+  color: var(--accent-green);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 1px 5px;
+  vertical-align: middle;
+}
+
+/* Distintivo de modelo multi-estado FHMM */
+.ms-flag {
+  background: rgba(92, 70, 249, 0.15);
+  border: 1px solid var(--accent-purple);
+  border-radius: 4px;
+  color: var(--accent-purple);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 1px 5px;
+  vertical-align: middle;
+}
+
+/* Badges de tipo de carga (clasificación por armónicos transitorios) */
+.load-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 12px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  line-height: 1.3;
+}
+
+.load-no_lineal {
+  background: rgba(255, 108, 117, 0.12);
+  border: 1px solid rgba(255, 108, 117, 0.55);
+  color: var(--accent-red);
+}
+
+.load-inductiva {
+  background: rgba(252, 176, 76, 0.12);
+  border: 1px solid rgba(252, 176, 76, 0.55);
+  color: var(--accent-yellow);
+}
+
+.load-resistiva {
+  background: rgba(68, 210, 200, 0.12);
+  border: 1px solid rgba(68, 210, 200, 0.55);
+  color: var(--accent-green);
+}
+
+/* Fila de badges dentro de la tarjeta de equipo */
+.mc-loadrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 12px;
+}
+
+/* Desglose de estados de operación FHMM */
+.mc-states {
+  background: var(--bg-card-sub);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  margin-top: 12px;
+  padding: 10px 12px;
+}
+
+.mc-states-title {
+  color: var(--text-muted);
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.state-row {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(120px, 160px) 1fr auto;
+  margin-bottom: 6px;
+}
+
+.state-row:last-child {
+  margin-bottom: 0;
+}
+
+.state-name {
+  color: var(--text-main);
+  font-size: 0.75rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.state-bar {
+  background: rgba(30, 41, 59, 0.5);
+  border-radius: 3px;
+  height: 10px;
+  overflow: hidden;
+}
+
+.state-bar > span {
+  border-radius: 3px;
+  display: block;
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.state-val {
+  color: var(--text-dim);
+  font-family: monospace;
+  font-size: 0.7rem;
+  white-space: nowrap;
+}

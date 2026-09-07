@@ -127,6 +127,32 @@ class UploadHandler(BaseHandler):
             self.set_status(500)
             self.write_json({"status": "error", "message": str(e)})
 
+class LabelsHandler(BaseHandler):
+    """Manual appliance renaming (Ground Truth). Labels are persisted per
+    dataset + cluster id and override the automatic heuristic names."""
+
+    def get(self):
+        try:
+            dataset_id = self.get_argument("dataset_id", "")
+            self.write_json({"status": "success", "data": {"labels": dm.get_labels(dataset_id)}})
+        except Exception as e:
+            self.set_status(500)
+            self.write_json({"status": "error", "message": str(e)})
+
+    def post(self):
+        try:
+            req = tornado.escape.json_decode(self.request.body) if self.request.body else {}
+            dataset_id = str(req.get("dataset_id", "")).strip()
+            cluster_id = int(req.get("cluster_id"))
+            name = str(req.get("name", ""))
+            if not dataset_id:
+                raise ValueError("dataset_id es requerido")
+            labels = dm.set_label(dataset_id, cluster_id, name)
+            self.write_json({"status": "success", "data": {"labels": labels}})
+        except Exception as e:
+            self.set_status(400)
+            self.write_json({"status": "error", "message": str(e)})
+
 class AnalyzeHandler(BaseHandler):
     def get(self):
         self.post()
@@ -146,12 +172,25 @@ class AnalyzeHandler(BaseHandler):
             current_threshold = float(req_data.get("current_threshold") or self.get_argument("current_threshold", "2.0"))
             power_threshold = float(req_data.get("power_threshold") or self.get_argument("power_threshold", "1.0"))
 
+            use_fhmm_raw = req_data.get("use_fhmm")
+            if use_fhmm_raw is None:
+                use_fhmm = self.get_argument("use_fhmm", "false").lower() in ("1", "true", "yes", "on")
+            else:
+                use_fhmm = bool(use_fhmm_raw)
+            max_states = int(req_data.get("max_states") or self.get_argument("max_states", "3"))
+
+            # Manual Ground-Truth labels persisted for this dataset
+            labels = dm.get_labels(dataset_id)
+
             result = nilm.analyze_dataset(
                 dataset_id=dataset_id,
                 n_clusters=n_clusters,
                 algorithm=algorithm,
                 current_threshold=current_threshold,
-                power_threshold=power_threshold
+                power_threshold=power_threshold,
+                use_fhmm=use_fhmm,
+                max_states=max_states,
+                labels=labels
             )
             self.write_json({"status": "success", "data": result})
         except Exception as e:
@@ -183,6 +222,7 @@ def make_app():
         (r"/api/harmonics", HarmonicsHandler),
         (r"/api/upload", UploadHandler),
         (r"/api/analyze", AnalyzeHandler),
+        (r"/api/labels", LabelsHandler),
         (r"/api/report", ReportHandler),
         (r"/(.*)", tornado.web.StaticFileHandler, {
             "path": frontend_dir,

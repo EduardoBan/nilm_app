@@ -68,6 +68,28 @@ export class NILMApiService {
     const json = await res.json();
     return json.data;
   }
+
+  /** Manual Ground-Truth labels: {cluster_id: custom_name} for a dataset */
+  async getLabels(datasetId: string): Promise<Record<string, string>> {
+    const res = await fetch(`${this.baseUrl}/api/labels?dataset_id=${encodeURIComponent(datasetId)}`);
+    if (!res.ok) throw new Error(`Error fetching labels: ${res.statusText}`);
+    const json = await res.json();
+    return json.data.labels || {};
+  }
+
+  /** Saves (or clears when name is empty) a custom appliance label */
+  async saveLabel(datasetId: string, clusterId: number, name: string): Promise<Record<string, string>> {
+    const res = await fetch(`${this.baseUrl}/api/labels`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataset_id: datasetId, cluster_id: clusterId, name })
+    });
+    const json = await res.json();
+    if (!res.ok || json.status !== 'success') {
+      throw new Error(json.message || `Error guardando etiqueta: ${res.statusText}`);
+    }
+    return json.data.labels || {};
+  }
 }
 
 export const api = new NILMApiService();

@@ -77,3 +77,31 @@ Cuando NILMTK está disponible, el análisis devuelve los estados de potencia ag
 - **Gaussian Mixture Models (GMM)**: Modelado probabilístico con matrices de covarianza para capturar cargas con variabilidad de régimen.
 - **DBSCAN**: Agrupamiento basado en densidad para identificar modos de operación atípicos o anomalías.
 - **Umbral de Disparo Ajustable**: Selector interactivo de sensibilidad de transitorio de corriente ($\Delta I$ de 0.5 A a 10 A).
+
+---
+
+## 🧠 Opción A: Mejoras de IA y Desagregación
+
+### 1. Modelado Multi-Estado (FHMM / HMM)
+Actívelo con el interruptor **🧠 Multi-Estado (FHMM)** de la barra de control. En lugar de asumir estados binarios ON/OFF, el motor implementa un **Modelo Oculto de Markov Factorial**:
+
+- **Estimación de niveles** (`estimate_machine_states`): los saltos de potencia de arranque (ΔP) de cada equipo se agrupan con K-Means + validación por silueta para detectar **estados intermedios** (ej. compresor en *Plena Carga* / *Marcha en Vacío* / *Apagado*).
+- **Inferencia MAP factorial** (`disaggregate_load_fhmm`): la señal agregada se modela como la superposición `P_total(t) ≈ P_base + Σ nivel_c(estado_c(t))`. La decodificación se realiza por descenso de coordenadas dirigido por eventos: inicialización voraz + refinamiento **Viterbi por bloques** con emisiones gaussianas y costo de conmutación.
+- **Salidas**: curvas de potencia multi-nivel por equipo, Gantt con el nombre del estado activo, y energía/tiempo por estado en las fichas de equipos (`multi_state_models` y `machine_statistics[].states` en la API).
+
+### 2. Edición y Etiquetado Manual de Equipos (Ground Truth)
+- Pulse **✏️** junto al nombre del equipo en la **tabla resumen** o en las **fichas técnicas** para renombrarlo en línea (ej. *"Compresor / Motor Principal"* → *"Compresor Sala de Máquinas N° 1"*). `Enter` guarda, `Esc` cancela.
+- Las etiquetas se persisten por medición + clúster en `backend/load_labels.json` (endpoints `GET/POST /api/labels`) y **sobrescriben el nombre automático en todos los análisis posteriores**. Los equipos renombrados muestran el distintivo **GT**.
+
+### 3. Refinamiento por Armónicos Transitorios
+El motor calcula el salto de corriente armónica (H3…H13, `ΔIh/ΔI₁`) en el instante de cada arranque y lo combina con el ratio reactivo/activo (ΔQ/ΔP) y el THD para clasificar la tecnología de la carga:
+
+| Firma del transitorio | Clasificación |
+|---|---|
+| ΔIh/ΔI₁ alto o THD ≥ 35 % con ΔQ/ΔP bajo | 🎛️ Electrónica de Potencia (Variador / Rectificador) |
+| ΔIh/ΔI₁ alto con componente reactiva | ⚡ Carga No Lineal (Soldadora / Arco Eléctrico) |
+| ΔQ/ΔP alto, armónicos bajos | ⚙️ Motor Inductivo (Arranque Directo / Estrella-Tríangulo) |
+| ΔQ/ΔP medio | 🌀 Motor / Carga Mixta (Arranque Suave) |
+| ΔQ/ΔP bajo, armónicos bajos | 🔥 Carga Resistiva (Calefacción / Iluminación) |
+
+El resultado se muestra como badge en la tabla (columna *Tipo de Carga*) y en las fichas, junto a la **Firma Armónica ΔIh/ΔI₁** de cada equipo.
