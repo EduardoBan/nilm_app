@@ -90,6 +90,18 @@ export class NILMApiService {
     }
     return json.data.labels || {};
   }
+
+  /** Clears all manual Ground-Truth labels for a dataset */
+  async clearLabels(datasetId: string): Promise<Record<string, string>> {
+    const res = await fetch(`${this.baseUrl}/api/labels?dataset_id=${encodeURIComponent(datasetId)}`, {
+      method: 'DELETE'
+    });
+    const json = await res.json();
+    if (!res.ok || json.status !== 'success') {
+      throw new Error(json.message || `Error restableciendo etiquetas: ${res.statusText}`);
+    }
+    return json.data.labels || {};
+  }
 }
 
 export const api = new NILMApiService();

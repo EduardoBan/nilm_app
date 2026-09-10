@@ -89,6 +89,13 @@ class DataManager:
         self._write_labels(data)
         return dict(bucket)
 
+    def clear_labels(self, dataset_id: str) -> dict:
+        """Clears all manual Ground-Truth labels for the dataset."""
+        data = self._read_labels()
+        data.pop(dataset_id, None)
+        self._write_labels(data)
+        return {}
+
     def list_datasets(self):
         files = sorted(glob.glob(os.path.join(self.data_dir, "*.xlsx")) + glob.glob(os.path.join(self.data_dir, "*.csv")))
         datasets = []

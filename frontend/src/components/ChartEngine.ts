@@ -15,6 +15,26 @@ function chartColor(variable: string, fallback: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(variable).trim() || fallback;
 }
 
+/**
+ * Resolves the real available size for a canvas. Falls back to the parent
+ * element width (even when the canvas rect reports 0 because the tab was
+ * hidden at render time), and finally to the viewport, so charts always
+ * stretch to the full width of the page.
+ */
+function resolveSize(
+  canvas: HTMLCanvasElement,
+  fallbackW: number,
+  fallbackH: number
+): { w: number; h: number } {
+  const rect = canvas.getBoundingClientRect?.() || { width: 0, height: 0 };
+  const parent = canvas.parentElement;
+  const parentW = parent ? parent.clientWidth || parent.getBoundingClientRect().width || 0 : 0;
+  const parentH = parent ? parent.clientHeight || parent.getBoundingClientRect().height || 0 : 0;
+  const w = rect.width || parentW || window.innerWidth || fallbackW;
+  const h = rect.height || parentH || fallbackH;
+  return { w, h };
+}
+
 export class ChartEngine {
   /**
    * Renders interactive multi-line / area time-series chart on HTML5 Canvas
@@ -30,14 +50,14 @@ export class ChartEngine {
     if (!ctx) return { destroy: () => {} };
 
     // High-DPI scaling
-    const rect = canvas.getBoundingClientRect();
+    const size = resolveSize(canvas, 800, 360);
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = (rect.width || 800) * dpr;
-    canvas.height = (rect.height || 350) * dpr;
+    canvas.width = size.w * dpr;
+    canvas.height = size.h * dpr;
     ctx.scale(dpr, dpr);
 
-    const width = rect.width || 800;
-    const height = rect.height || 350;
+    const width = size.w;
+    const height = size.h;
 
     const padLeft = 65;
     const padRight = 25;
@@ -224,14 +244,14 @@ export class ChartEngine {
     const ctx = canvas.getContext('2d');
     if (!ctx) return { destroy: () => {}, setView: (_view: 'xy' | 'yz' | 'zx') => {} };
 
-    const rect = canvas.getBoundingClientRect();
+    const size = resolveSize(canvas, 700, 420);
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = (rect.width || 700) * dpr;
-    canvas.height = (rect.height || 380) * dpr;
+    canvas.width = size.w * dpr;
+    canvas.height = size.h * dpr;
     ctx.scale(dpr, dpr);
 
-    const width = rect.width || 700;
-    const height = rect.height || 380;
+    const width = size.w;
+    const height = size.h;
 
     const maxX = Math.max(...events.map(e => Math.abs(e.x)), 1) * 1.15;
     const maxZ = Math.max(...events.map(e => e.z), 1) * 1.1;
@@ -608,14 +628,14 @@ export class ChartEngine {
     const ctx = canvas.getContext('2d');
     if (!ctx) return { destroy: () => {} };
 
-    const rect = canvas.getBoundingClientRect();
+    const size = resolveSize(canvas, 600, 360);
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = (rect.width || 600) * dpr;
-    canvas.height = (rect.height || 350) * dpr;
+    canvas.width = size.w * dpr;
+    canvas.height = size.h * dpr;
     ctx.scale(dpr, dpr);
 
-    const width = rect.width || 600;
-    const height = rect.height || 350;
+    const width = size.w;
+    const height = size.h;
 
     const padLeft = 60;
     const padRight = 20;
@@ -994,14 +1014,14 @@ export class ChartEngine {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const rect = canvas.getBoundingClientRect();
+    const size = resolveSize(canvas, 500, 320);
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = (rect.width || 400) * dpr;
-    canvas.height = (rect.height || 250) * dpr;
+    canvas.width = size.w * dpr;
+    canvas.height = size.h * dpr;
     ctx.scale(dpr, dpr);
 
-    const width = rect.width || 400;
-    const height = rect.height || 250;
+    const width = size.w;
+    const height = size.h;
 
     const padLeft = 45;
     const padRight = 15;
@@ -1057,18 +1077,18 @@ export class ChartEngine {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const rect = canvas.getBoundingClientRect();
+    const size = resolveSize(canvas, 400, 360);
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = (rect.width || 250) * dpr;
-    canvas.height = (rect.height || 250) * dpr;
+    canvas.width = size.w * dpr;
+    canvas.height = size.h * dpr;
     ctx.scale(dpr, dpr);
 
-    const width = rect.width || 250;
-    const height = rect.height || 250;
+    const width = size.w;
+    const height = size.h;
     const cx = width / 2;
     const cy = height / 2;
-    const radius = Math.min(cx, cy) * 0.75;
-    const innerRadius = radius * 0.58;
+    const radius = Math.min(cx, cy) * 0.85;
+    const innerRadius = radius * 0.6;
 
     const total = slices.reduce((acc, s) => acc + s.value, 0) || 1;
 

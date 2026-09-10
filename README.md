@@ -89,9 +89,12 @@ Actívelo con el interruptor **🧠 Multi-Estado (FHMM)** de la barra de control
 - **Inferencia MAP factorial** (`disaggregate_load_fhmm`): la señal agregada se modela como la superposición `P_total(t) ≈ P_base + Σ nivel_c(estado_c(t))`. La decodificación se realiza por descenso de coordenadas dirigido por eventos: inicialización voraz + refinamiento **Viterbi por bloques** con emisiones gaussianas y costo de conmutación.
 - **Salidas**: curvas de potencia multi-nivel por equipo, Gantt con el nombre del estado activo, y energía/tiempo por estado en las fichas de equipos (`multi_state_models` y `machine_statistics[].states` en la API).
 
-### 2. Edición y Etiquetado Manual de Equipos (Ground Truth)
-- Pulse **✏️** junto al nombre del equipo en la **tabla resumen** o en las **fichas técnicas** para renombrarlo en línea (ej. *"Compresor / Motor Principal"* → *"Compresor Sala de Máquinas N° 1"*). `Enter` guarda, `Esc` cancela.
-- Las etiquetas se persisten por medición + clúster en `backend/load_labels.json` (endpoints `GET/POST /api/labels`) y **sobrescriben el nombre automático en todos los análisis posteriores**. Los equipos renombrados muestran el distintivo **GT**.
+### 2. Edición y Etiquetado Manual de Equipos (Ground Truth - Punto B)
+- **Renombrado en dos vías**: Pulse **✏️** junto al nombre del equipo en la **tabla resumen** o en las **fichas técnicas** para renombrarlo en línea (ej. *"Compresor / Motor Principal"* → *"Compresor Sala de Máquinas N° 1"*). `Enter` guarda, `Esc` cancela.
+- **Ranking determinístico**: Los clústeres generados por la IA se reordenan automáticamente por potencia activa nominal descendente ($\Delta P$). El ID `0` siempre corresponde a la carga principal de mayor potencia, garantizando estabilidad permanente de las etiquetas manuales.
+- **Persistencia en Servidor**: Las etiquetas se almacenan por medición + clúster en `backend/load_labels.json` (endpoints REST `GET /api/labels`, `POST /api/labels` y `DELETE /api/labels` para restablecer valores automáticos).
+- **Propagación Integral**: El nombre personalizado se propaga en cascada hacia las curvas temporales desagregadas, los diagramas de Gantt, la nube 3D y los espacios de características 2D, acompañado del distintivo visual **GT**.
+- **Informe PDF Dinámico**: El botón **📄 Informe PDF** genera al vuelo el reporte técnico para la medición activa, incluyendo una tabla de fichas de cargas con los nombres Ground Truth y la distribución porcentual de consumo eléctrico.
 
 ### 3. Refinamiento por Armónicos Transitorios
 El motor calcula el salto de corriente armónica (H3…H13, `ΔIh/ΔI₁`) en el instante de cada arranque y lo combina con el ratio reactivo/activo (ΔQ/ΔP) y el THD para clasificar la tecnología de la carga:

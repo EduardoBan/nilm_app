@@ -486,25 +486,33 @@ body {
 /* Canvas Wrap */
 .chart-container {
   width: 100%;
-  height: 360px;
+  height: 440px;
   position: relative;
 }
 
 .chart-container canvas {
   width: 100%;
   height: 100%;
+  display: block;
   border-radius: var(--radius-sm);
 }
 
 .two-col-grid {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  grid-template-columns: 3fr 1.1fr;
   gap: 1.5rem;
 }
 
 .split-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+/* Full-width single column grid (used to stretch feature-space scatters) */
+.stack-grid {
+  display: grid;
+  grid-template-columns: 1fr;
   gap: 1.5rem;
 }
 
@@ -874,6 +882,31 @@ body {
   color: var(--accent-blue);
 }
 
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-secondary {
+  background: var(--bg-card-sub);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--font-family);
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  transition: all 0.15s ease;
+}
+
+.btn-secondary:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-blue);
+  color: var(--text-main);
+}
+
 /* Entrada de renombrado en línea */
 .rename-input {
   background: var(--bg-card-sub);
@@ -1013,4 +1046,60 @@ body {
   font-family: monospace;
   font-size: 0.7rem;
   white-space: nowrap;
+}
+
+/* ==========================================================================
+   Chips multi-estado FHMM en la tabla de equipos
+   ========================================================================== */
+.machine-states {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.state-chip {
+  align-items: center;
+  background: var(--bg-card-sub);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  display: inline-flex;
+  flex-wrap: wrap;
+  font-size: 0.66rem;
+  gap: 5px;
+  line-height: 1.25;
+  padding: 2px 8px;
+}
+
+.state-chip-name {
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.state-chip-kw {
+  color: var(--text-muted);
+  font-family: monospace;
+}
+
+.state-chip-min {
+  color: var(--text-dim);
+}
+
+.state-count-badge {
+  align-items: center;
+  background: rgba(92, 70, 249, 0.15);
+  border: 1px solid rgba(92, 70, 249, 0.55);
+  border-radius: 12px;
+  color: var(--accent-purple);
+  display: inline-flex;
+  font-size: 0.68rem;
+  font-weight: 700;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.state-count-badge .flag {
+  font-size: 0.72rem;
 }

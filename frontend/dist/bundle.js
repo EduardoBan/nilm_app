@@ -23,6 +23,26 @@ function chartColor(variable        , fallback        )         {
   return getComputedStyle(document.documentElement).getPropertyValue(variable).trim() || fallback;
 }
 
+/**
+ * Resolves the real available size for a canvas. Falls back to the parent
+ * element width (even when the canvas rect reports 0 because the tab was
+ * hidden at render time), and finally to the viewport, so charts always
+ * stretch to the full width of the page.
+ */
+function resolveSize(
+  canvas                   ,
+  fallbackW        ,
+  fallbackH        
+)                           {
+  const rect = canvas.getBoundingClientRect?.() || { width: 0, height: 0 };
+  const parent = canvas.parentElement;
+  const parentW = parent ? parent.clientWidth || parent.getBoundingClientRect().width || 0 : 0;
+  const parentH = parent ? parent.clientHeight || parent.getBoundingClientRect().height || 0 : 0;
+  const w = rect.width || parentW || window.innerWidth || fallbackW;
+  const h = rect.height || parentH || fallbackH;
+  return { w, h };
+}
+
 class ChartEngine {
   /**
    * Renders interactive multi-line / area time-series chart on HTML5 Canvas
@@ -38,14 +58,14 @@ class ChartEngine {
     if (!ctx) return { destroy: () => {} };
 
     // High-DPI scaling
-    const rect = canvas.getBoundingClientRect();
+    const size = resolveSize(canvas, 800, 360);
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = (rect.width || 800) * dpr;
-    canvas.height = (rect.height || 350) * dpr;
+    canvas.width = size.w * dpr;
+    canvas.height = size.h * dpr;
     ctx.scale(dpr, dpr);
 
-    const width = rect.width || 800;
-    const height = rect.height || 350;
+    const width = size.w;
+    const height = size.h;
 
     const padLeft = 65;
     const padRight = 25;
@@ -232,14 +252,14 @@ class ChartEngine {
     const ctx = canvas.getContext('2d');
     if (!ctx) return { destroy: () => {}, setView: (_view                    ) => {} };
 
-    const rect = canvas.getBoundingClientRect();
+    const size = resolveSize(canvas, 700, 420);
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = (rect.width || 700) * dpr;
-    canvas.height = (rect.height || 380) * dpr;
+    canvas.width = size.w * dpr;
+    canvas.height = size.h * dpr;
     ctx.scale(dpr, dpr);
 
-    const width = rect.width || 700;
-    const height = rect.height || 380;
+    const width = size.w;
+    const height = size.h;
 
     const maxX = Math.max(...events.map(e => Math.abs(e.x)), 1) * 1.15;
     const maxZ = Math.max(...events.map(e => e.z), 1) * 1.1;
@@ -458,7 +478,7 @@ class ChartEngine {
       ctx.restore();
 
       const projectedPoints = events.map((ev, idx) => {
-        const p = project3D(ev.x / maxX, normY(ev.y), ev.z / maxZ);
+        const p = project3D(ev.x, ev.y, ev.z);
         return { ...ev, idx, px: p.x, py: p.y, scale: p.scale };
       }).filter(ev => !state.hiddenClusters.has(ev.cluster));
 
@@ -516,7 +536,7 @@ class ChartEngine {
       let bestDist = Infinity;
       events.forEach((ev, idx) => {
         if (state.hiddenClusters.has(ev.cluster)) return;
-        const p = project3D(ev.x / maxX, normY(ev.y), ev.z / maxZ);
+        const p = project3D(ev.x, ev.y, ev.z);
         const dist = Math.hypot(mx - p.x, my - p.y);
         if (dist < 12 && dist < bestDist) {
           bestDist = dist;
@@ -616,14 +636,14 @@ class ChartEngine {
     const ctx = canvas.getContext('2d');
     if (!ctx) return { destroy: () => {} };
 
-    const rect = canvas.getBoundingClientRect();
+    const size = resolveSize(canvas, 600, 360);
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = (rect.width || 600) * dpr;
-    canvas.height = (rect.height || 350) * dpr;
+    canvas.width = size.w * dpr;
+    canvas.height = size.h * dpr;
     ctx.scale(dpr, dpr);
 
-    const width = rect.width || 600;
-    const height = rect.height || 350;
+    const width = size.w;
+    const height = size.h;
 
     const padLeft = 60;
     const padRight = 20;
@@ -1002,14 +1022,14 @@ class ChartEngine {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const rect = canvas.getBoundingClientRect();
+    const size = resolveSize(canvas, 500, 320);
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = (rect.width || 400) * dpr;
-    canvas.height = (rect.height || 250) * dpr;
+    canvas.width = size.w * dpr;
+    canvas.height = size.h * dpr;
     ctx.scale(dpr, dpr);
 
-    const width = rect.width || 400;
-    const height = rect.height || 250;
+    const width = size.w;
+    const height = size.h;
 
     const padLeft = 45;
     const padRight = 15;
@@ -1065,18 +1085,18 @@ class ChartEngine {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const rect = canvas.getBoundingClientRect();
+    const size = resolveSize(canvas, 400, 360);
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = (rect.width || 250) * dpr;
-    canvas.height = (rect.height || 250) * dpr;
+    canvas.width = size.w * dpr;
+    canvas.height = size.h * dpr;
     ctx.scale(dpr, dpr);
 
-    const width = rect.width || 250;
-    const height = rect.height || 250;
+    const width = size.w;
+    const height = size.h;
     const cx = width / 2;
     const cy = height / 2;
-    const radius = Math.min(cx, cy) * 0.75;
-    const innerRadius = radius * 0.58;
+    const radius = Math.min(cx, cy) * 0.85;
+    const innerRadius = radius * 0.6;
 
     const total = slices.reduce((acc, s) => acc + s.value, 0) || 1;
 
@@ -1191,6 +1211,18 @@ class NILMApiService {
     }
     return json.data.labels || {};
   }
+
+  /** Clears all manual Ground-Truth labels for a dataset */
+  async clearLabels(datasetId        )                                  {
+    const res = await fetch(`${this.baseUrl}/api/labels?dataset_id=${encodeURIComponent(datasetId)}`, {
+      method: 'DELETE'
+    });
+    const json = await res.json();
+    if (!res.ok || json.status !== 'success') {
+      throw new Error(json.message || `Error restableciendo etiquetas: ${res.statusText}`);
+    }
+    return json.data.labels || {};
+  }
 }
 
 const api = new NILMApiService();
@@ -1286,6 +1318,25 @@ class NILMApp {
         this.runNILMAnalysis();
       });
     }
+
+    // Reset Ground Truth custom labels (Punto B)
+    const btnResetLabels = document.getElementById('btn-reset-labels');
+    btnResetLabels?.addEventListener('click', async () => {
+      if (!this.currentDatasetId) return;
+      if (confirm('¿Deseas restablecer los nombres de las cargas a sus valores automáticos? Se borrarán las etiquetas personalizadas para esta medición.')) {
+        try {
+          this.showLoading(true);
+          await api.clearLabels(this.currentDatasetId);
+          this.showToast('Etiquetas personalizadas restablecidas', 'success');
+          await this.runNILMAnalysis();
+        } catch (err     ) {
+          console.error(err);
+          this.showToast(`Error al restablecer etiquetas: ${err.message}`, 'error');
+        } finally {
+          this.showLoading(false);
+        }
+      }
+    });
 
     // Tabs
     const tabButtons = document.querySelectorAll('.nav-tab');
@@ -1420,6 +1471,13 @@ class NILMApp {
       this.harmonics = harm;
 
       this.updateKPIs();
+
+      // Update PDF report link with current dataset
+      const reportLink = document.getElementById('report-link-btn')                     ;
+      if (reportLink && this.currentDatasetId) {
+        reportLink.href = `/api/report?dataset_id=${encodeURIComponent(this.currentDatasetId)}`;
+      }
+
       await this.runNILMAnalysis();
     } catch (err     ) {
       console.error(err);
@@ -1490,10 +1548,32 @@ class NILMApp {
     this.analysis.machine_statistics.forEach(m => {
       const tr = document.createElement('tr');
       const loadBadge = m.load_class
-        ? `<span class="load-badge load-${m.load_family || 'inductiva'}">${m.load_icon || '⚙️'} ${m.load_class}</span>`
+        ? `<span class="load-badge load-${m.load_family || 'inductiva'}'">${m.load_icon || '⚙️'} ${m.load_class}</span>`
         : `<span class="badge-cat">${m.category}</span>`;
+      
+      // Opción A: modelado multi-estado FHMM — chips por cada nivel de estado
+      let statesHtml = '';
+      if (m.states && m.states.length > 1) {
+        statesHtml = `<div class="machine-states">` +
+          m.states.filter(s => s.kw > 0).map(s =>
+            `<span class="state-chip" style="border-color:${m.color}">
+               <span class="state-chip-name">${s.name}</span>
+               <span class="state-chip-kw">${s.kw.toFixed(2)} kW</span>
+               <span class="state-chip-min">${s.minutes.toFixed(0)} min</span>
+             </span>`
+          ).join('') +
+          `</div>`;
+      }
+      
       tr.innerHTML = `
-        <td><span class="badge-color" style="background:${m.color}"></span> <strong class="editable-name" data-machine="${m.id}" title="Click en ✏️ para renombrar (Ground Truth)">${m.name}</strong> <button class="edit-btn" data-edit="${m.id}" title="Renombrar equipo (Ground Truth)">✏️</button>${m.custom_label ? ' <span class="gt-flag" title="Etiqueta personalizada guardada">GT</span>' : ''}</td>
+        <td>
+          <span class="badge-color" style="background:${m.color}"></span>
+          <strong class="editable-name" data-machine="${m.id}" title="Click en ✏️ para renombrar (Ground Truth)">${m.name}</strong>
+          <button class="edit-btn" data-edit="${m.id}" title="Renombrar equipo (Ground Truth)">✏️</button>
+          ${m.custom_label ? ' <span class="gt-flag" title="Etiqueta personalizada guardada">GT</span>' : ''}
+          ${(m.states && m.states.length > 1) ? `<span class="state-count-badge" title="Modo multi-estado FHMM"><span class="flag">🧠</span> ${m.states.length} estados</span>` : ''}
+          ${statesHtml}
+        </td>
         <td>${loadBadge}</td>
         <td><strong>${m.nominal_power_kw.toFixed(1)} kW</strong></td>
         <td>${m.peak_current_a.toFixed(1)} A</td>
@@ -1557,6 +1637,7 @@ class NILMApp {
       const newName = input.value.trim();
       if (!commit || !newName || newName === original) {
         this.updateApplianceTable();
+        this.renderMachinesTab();
         this.renderCurrentTabCharts();
         return;
       }
@@ -1569,6 +1650,7 @@ class NILMApp {
           console.error(err);
           this.showToast(`Error guardando etiqueta: ${err.message}`, 'error');
           this.updateApplianceTable();
+          this.renderMachinesTab();
           this.renderCurrentTabCharts();
         });
     };
@@ -1676,42 +1758,18 @@ class NILMApp {
       const card = document.createElement('div');
       card.className = 'machine-card';
       card.style.borderLeft = `5px solid ${m.color}`;
-
-      const loadBadge = m.load_class
-        ? `<span class="load-badge load-${m.load_family || 'inductiva'}" title="Clasificación por armónicos transitorios (ΔIh/ΔI₁ = ${(m.harmonic_signature_pct ?? 0).toFixed(0)}% · ΔQ/ΔP = ${(m.q_p_ratio ?? 0).toFixed(2)})">${m.load_icon || '⚙️'} ${m.load_class}</span>`
-        : `<span class="load-badge load-inductiva" title="${m.category}">⚙️ ${m.category}</span>`;
-
-      const fhmmFlag = (m.n_states ?? 2) > 2
-        ? `<span class="ms-flag" title="Modelo multi-estado FHMM con estados intermedios">FHMM · ${m.n_states} estados</span>`
-        : '';
-
-      // Opción A - Punto 1: FHMM operating-state breakdown (non-OFF states)
-      let statesHtml = '';
-      if (this.useFhmm && m.states && m.states.length > 0) {
-        const activeStates = m.states.filter(s => s.kw > 0);
-        if (activeStates.length > 0) {
-          statesHtml = `
-            <div class="mc-states">
-              <span class="mc-states-title">Estados de Operación (FHMM)</span>
-              ${activeStates.map(s => `
-                <div class="state-row">
-                  <span class="state-name" title="${s.name}">${s.name}</span>
-                  <span class="state-bar"><span style="width:${Math.max(4, Math.min(100, s.share_pct))}%; background:${m.color}"></span></span>
-                  <span class="state-val">${s.kw.toFixed(1)} kW · ${s.minutes.toFixed(0)} min · ${s.energy_kwh.toFixed(2)} kWh</span>
-                </div>`).join('')}
-            </div>`;
-        }
-      }
-
       card.innerHTML = `
         <div class="mc-header">
           <div>
-            <h3 style="color:${m.color}"><span class="editable-name" data-machine="${m.id}">${m.name}</span> <button class="edit-btn" data-edit="${m.id}" title="Renombrar equipo (Ground Truth)">✏️</button>${m.custom_label ? ' <span class="gt-flag" title="Etiqueta personalizada guardada">GT</span>' : ''}</h3>
+            <h3 style="color:${m.color}">
+              <span class="editable-name" data-machine="${m.id}" title="Click en ✏️ para renombrar (Ground Truth)">${m.name}</span>
+              <button class="edit-btn" data-edit="${m.id}" title="Renombrar equipo (Ground Truth)">✏️</button>
+              ${m.custom_label ? ' <span class="gt-flag" title="Etiqueta personalizada guardada (Ground Truth)">GT</span>' : ''}
+            </h3>
             <span class="mc-category">${m.category}</span>
           </div>
           <span class="mc-status badge-status status-active">${m.status}</span>
         </div>
-        <div class="mc-loadrow">${loadBadge}${fhmmFlag}</div>
         <div class="mc-grid">
           <div class="mc-stat">
             <span class="mc-stat-label">Potencia Nominal</span>
@@ -1726,10 +1784,6 @@ class NILMApp {
             <span class="mc-stat-val">${m.thd_pct.toFixed(1)} %</span>
           </div>
           <div class="mc-stat">
-            <span class="mc-stat-label">Firma Armónica ΔIh/ΔI₁</span>
-            <span class="mc-stat-val">${(m.harmonic_signature_pct ?? 0).toFixed(0)} %</span>
-          </div>
-          <div class="mc-stat">
             <span class="mc-stat-label">Total Arranques</span>
             <span class="mc-stat-val">${m.event_count}</span>
           </div>
@@ -1742,20 +1796,44 @@ class NILMApp {
             <span class="mc-stat-val">${m.energy_kwh.toFixed(2)} kWh (${m.energy_share_pct.toFixed(1)}%)</span>
           </div>
         </div>
-        ${statesHtml}
+        ${this.renderMachineStatesBlock(m)}
       `;
       container.appendChild(card);
     });
 
-    // Bind Ground-Truth rename buttons (Opción A - Punto 2)
+    // Bind Ground-Truth rename buttons in cards
     container.querySelectorAll                   ('button.edit-btn').forEach(btn => {
       btn.addEventListener('click', (ev) => {
         ev.stopPropagation();
         const id = parseInt(btn.dataset['edit'] || '0', 10);
-        const nameSpan = btn.closest('h3')?.querySelector             ('.editable-name');
+        const nameSpan = container.querySelector             (`.editable-name[data-machine="${id}"]`);
         if (nameSpan) this.startRename(id, nameSpan);
       });
     });
+  }
+
+  /** Opción A: desglose de estados multi-nivel FHMM en las fichas técnicas */
+          renderMachineStatesBlock(m     )         {
+    if (!m.states || m.states.length <= 1) return '';
+    const maxMin = Math.max(1, ...m.states.map((s     ) => s.minutes || 0));
+    const rows = m.states
+      .filter((s     ) => s.kw > 0)
+      .map((s     ) => `
+        <div class="state-row">
+          <span class="state-name">${s.name}</span>
+          <div class="state-bar">
+            <span style="width:${Math.max(2, Math.round((s.minutes || 0) / maxMin * 100))}%; background:${m.color}"></span>
+          </div>
+          <span class="state-val">${s.kw.toFixed(2)} kW · ${s.minutes.toFixed(0)} min (${s.share_pct.toFixed(1)}%)</span>
+        </div>
+      `).join('');
+    if (!rows) return '';
+    return `
+      <div class="mc-states">
+        <span class="mc-states-title">🧠 Estados de Operación (FHMM Multi-Nivel)</span>
+        ${rows}
+      </div>
+    `;
   }
 
           renderTimelineTab() {

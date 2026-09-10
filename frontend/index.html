@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>NILM Energy Analytics - Desagregación y Monitoreo de Cargas Eléctricas</title>
-  <link rel="stylesheet" href="css/styles.css?v=inti-20260904-theme">
+  <link rel="stylesheet" href="css/styles.css?v=fullwidth-charts-20260908">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -25,7 +25,7 @@
         <div class="status-dot"></div>
         <span>Servidor Python / Cliente TypeScript Online</span>
       </div>
-      <a href="/api/report" target="_blank" class="report-link" title="Descargar Informe Técnico NILM en PDF">
+      <a id="report-link-btn" href="/api/report" target="_blank" class="report-link" title="Descargar Informe Técnico NILM en PDF">
         📄 <span>Informe PDF</span>
       </a>
       <label class="theme-switcher" for="theme-select">
@@ -164,7 +164,7 @@
               <p class="card-subtitle">Participación de cada máquina en el consumo total diario</p>
             </div>
           </div>
-          <div class="chart-container" style="display:flex; justify-content:center; align-items:center;">
+          <div class="chart-container">
             <canvas id="chart-energy-donut"></canvas>
           </div>
         </div>
@@ -176,6 +176,9 @@
           <div>
             <h2 class="card-title">📋 Resumen de Equipos y Cargas Identificadas</h2>
             <p class="card-subtitle">Estimación de potencias nominales, corrientes transitorias, tiempo de uso y energía consumida</p>
+          </div>
+          <div class="card-actions">
+            <button id="btn-reset-labels" class="btn-secondary" title="Restablecer nombres automáticos (borrar etiquetas personalizadas)">🔄 Restablecer Nombres</button>
           </div>
         </div>
         <div class="table-responsive">
@@ -261,7 +264,7 @@
 
     <!-- Tab 5: AI Feature Spaces -->
     <section id="tab-features2d" class="tab-content">
-      <div class="split-grid">
+      <div class="stack-grid">
         <div class="card">
           <div class="card-header">
             <div>
@@ -305,7 +308,7 @@
 
     <!-- Tab 6: Power Quality & Harmonics -->
     <section id="tab-quality" class="tab-content">
-      <div class="split-grid">
+      <div class="stack-grid">
         <div class="card">
           <div class="card-header">
             <div>
@@ -361,6 +364,6 @@
   <div id="toast" class="toast"></div>
 
   <!-- Compiled TypeScript Application Bundle -->
-  <script src="dist/bundle.js?v=axis3d-fix-20260907b"></script>
+  <script src="dist/bundle.js?v=fullwidth-charts-20260908"></script>
 </body>
 </html>

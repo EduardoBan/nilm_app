@@ -1,4 +1,4 @@
-"""Generate a Spanish NILM analysis report with real data and charts."""
+"""Generate a Spanish NILM analysis report with real data, Ground Truth labels, and charts."""
 from pathlib import Path
 import sys
 import textwrap
@@ -63,27 +63,46 @@ def add_wrapped(fig, text, x, y, width=105, fontsize=10, line_height=0.031, colo
     return y - len(lines) * line_height
 
 
-def main():
+def generate_report(dataset_id: str = "coop_gouge_v2_10_abril",
+                    n_clusters: int = 4,
+                    algorithm: str = "kmeans",
+                    output_path: Path = None,
+                    labels: dict = None) -> Path:
+    """
+    Generates a multi-page PDF report with real dataset signals, Ground-Truth
+    appliance labels, operational metrics, and 2D/3D feature spaces.
+    """
+    if output_path is None:
+        output_path = OUTPUT
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
     dm = DataManager()
     engine = NILMEngine(dm)
-    df = dm.load_dataset(DATASET)
-    summary = dm.get_summary_stats(DATASET)
+
+    if labels is None:
+        labels = dm.get_labels(dataset_id)
+
+    df = dm.load_dataset(dataset_id)
+    summary = dm.get_summary_stats(dataset_id)
     df_work, events = engine.detect_events(df, current_threshold=2.0, power_threshold=1.0)
-    clustered, cluster_info = engine.cluster_appliances(events, n_clusters=4, algorithm="kmeans")
+    clustered, cluster_info = engine.cluster_appliances(
+        events, n_clusters=n_clusters, algorithm=algorithm, custom_labels=labels
+    )
     disagg, baseline, timeline, machine_stats = engine.disaggregate_load(df_work, clustered, cluster_info)
 
-    with PdfPages(OUTPUT) as pdf:
+    with PdfPages(output_path) as pdf:
         # 1. Executive summary
-        fig = page("Informe de análisis NILM", "Desagregación no intrusiva de cargas eléctricas | Medición: 10 de abril")
+        fig = page("Informe de análisis NILM", f"Desagregación no intrusiva de cargas eléctricas | Medición: {dataset_id}")
         fig.text(0.08, 0.78, "Objetivo", fontsize=14, color=INTI["cyan"], weight="bold")
         add_wrapped(fig, "Inferir los equipos o modos de operación presentes en una instalación a partir de una medición eléctrica agregada, sin sensores individuales por máquina.", 0.08, 0.74, 108, 11)
         cards = [
             ("Muestras", f"{summary['samples']:,}"),
             ("Duración", f"{summary['duration_hours']:.2f} h"),
-            ("Energía", f"{summary['total_energy_kwh']:.2f} kWh"),
-            ("Pico", f"{summary['peak_power_kw']:.2f} kW"),
-            ("Eventos", f"{len(clustered):,}"),
-            ("Clústeres", f"{len(cluster_info)}"),
+            ("Energía Total", f"{summary['total_energy_kwh']:.2f} kWh"),
+            ("Potencia Pico", f"{summary['peak_power_kw']:.2f} kW"),
+            ("Eventos Detectados", f"{len(clustered):,}"),
+            ("Cargas / Clústeres", f"{len(cluster_info)}"),
         ]
         for i, (label, value) in enumerate(cards):
             x = 0.08 + (i % 3) * 0.29
@@ -91,8 +110,11 @@ def main():
             fig.add_artist(plt.Rectangle((x, y), 0.23, 0.12, facecolor="#F2F5F8", edgecolor=INTI["cyan"], linewidth=1.2))
             fig.text(x + 0.015, y + 0.078, label, fontsize=9, color=INTI["gray"])
             fig.text(x + 0.015, y + 0.03, value, fontsize=17, color=INTI["blue"], weight="bold")
+
+        has_gt = any(m.get("custom_label") for m in machine_stats)
+        gt_note = " · Ground Truth activo (etiquetas manuales personalizadas)" if has_gt else ""
         fig.text(0.08, 0.18, "Configuración reproducida", fontsize=13, color=INTI["cyan"], weight="bold")
-        add_wrapped(fig, "Detección: ΔI ≥ 2 A o ΔP ≥ 1 kW (arranques) y apagados simétricos. Agrupamiento: K-Means con 4 grupos, normalización StandardScaler y semilla aleatoria 42.", 0.08, 0.14, 108, 10)
+        add_wrapped(fig, f"Detección: ΔI ≥ 2 A o ΔP ≥ 1 kW (arranques) y transiciones simétricas. Agrupamiento: {algorithm.upper()} con {n_clusters} grupos, normalización StandardScaler.{gt_note}", 0.08, 0.14, 108, 10)
         pdf.savefig(fig); plt.close(fig)
 
         # 2. Pipeline and variables
@@ -100,10 +122,10 @@ def main():
         steps = [
             ("1. Limpieza", "Fecha + hora → timestamp ordenado. Columnas eléctricas → valores numéricos."),
             ("2. Magnitudes", "I_total, V_avg, PF_avg, P_total, S_total, Q_total y THD_avg."),
-            ("3. Cambios", "ΔI, ΔP y ΔQ entre muestras consecutivas."),
-            ("4. Eventos", "Se conservan las transiciones positivas y negativas (arranque y apagado) que superan los umbrales."),
-            ("5. Firma", "Cada evento se representa como [ΔP, ΔI, THD, ΔQ]."),
-            ("6. Clustering", "StandardScaler + K-Means, GMM o DBSCAN."),
+            ("3. Cambios", "ΔI, ΔP y ΔQ entre muestras consecutivas de 10 segundos."),
+            ("4. Eventos", "Se conservan transiciones positivas y negativas (arranque/parada) sobre el umbral."),
+            ("5. Firma", "Cada evento se representa como [ΔP, ΔI, THD, ΔQ, ΔIh/ΔI1]."),
+            ("6. Clustering", f"StandardScaler + {algorithm.upper()} con remapeo determinístico por potencia."),
         ]
         for i, (head, body) in enumerate(steps):
             y = 0.79 - i * 0.105
@@ -138,13 +160,81 @@ def main():
         fig.autofmt_xdate()
         pdf.savefig(fig); plt.close(fig)
 
-        # 4. 3D actual feature view
+        # 4. Fichas de Cargas y Reparto Energético (Ground Truth)
+        fig = page("Equipos Desagregados y Reparto Energético", "Fichas técnicas de las máquinas identificadas y validación Ground Truth")
+        
+        # Upper subplot: Table
+        ax_table = fig.add_axes([0.08, 0.44, 0.86, 0.40])
+        ax_table.axis('off')
+
+        headers = ["Carga", "Equipo Identificado", "Tipo / Firma", "Potencia", "ΔI Pico", "THD", "Arranques", "Uso", "Energía", "Participación"]
+        table_rows = []
+        cell_colors = []
+        for m in machine_stats:
+            gt_tag = " [GT]" if m.get("custom_label") else ""
+            table_rows.append([
+                f"M{m['id']}",
+                f"{m['name'][:24]}{gt_tag}",
+                f"{m.get('load_class', m['category'])[:22]}",
+                f"{m['nominal_power_kw']:.1f} kW",
+                f"{m['peak_current_a']:.1f} A",
+                f"{m['thd_pct']:.1f} %",
+                f"{m['event_count']}",
+                f"{m['active_minutes']/60.0:.1f} h",
+                f"{m['energy_kwh']:.2f} kWh",
+                f"{m['energy_share_pct']:.1f} %"
+            ])
+            cell_colors.append(["#F9FAFB"] * len(headers))
+
+        table = ax_table.table(
+            cellText=table_rows,
+            colLabels=headers,
+            cellLoc='center',
+            loc='center',
+            cellColours=cell_colors
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(8)
+        table.scale(1.0, 1.6)
+
+        # Style table headers
+        for k in range(len(headers)):
+            cell = table[(0, k)]
+            cell.set_facecolor(INTI["blue"])
+            cell.set_text_props(color='white', weight='bold')
+
+        # Lower subplot: Bar chart of energy share
+        ax_bar = fig.add_axes([0.08, 0.12, 0.86, 0.24])
+        machine_names = [f"M{m['id']}: {m['name'][:18]}" + (" [GT]" if m.get("custom_label") else "") for m in machine_stats]
+        shares = [m["energy_share_pct"] for m in machine_stats]
+        bar_colors = [m.get("color", INTI["cyan"]) for m in machine_stats]
+
+        y_pos = np.arange(len(machine_names))
+        bars = ax_bar.barh(y_pos, shares, color=bar_colors, edgecolor=INTI["gray"], height=0.55)
+        ax_bar.set_yticks(y_pos)
+        ax_bar.set_yticklabels(machine_names, fontsize=8)
+        ax_bar.invert_yaxis()
+        ax_bar.set_xlabel("Participación en el consumo total diario (%)", fontsize=8)
+        ax_bar.set_title("Distribución porcentual de energía desagregada por carga", fontsize=9, weight="bold")
+        ax_bar.grid(axis='x', alpha=0.3)
+
+        for bar in bars:
+            w = bar.get_width()
+            ax_bar.text(w + 0.5, bar.get_y() + bar.get_height() / 2, f"{w:.1f}%", va='center', fontsize=8, weight='bold', color=INTI["ink"])
+
+        fig.text(0.08, 0.07, "* Nota: [GT] indica equipo con nombre personalizado por el usuario (Ground Truth persistido en base de datos).", fontsize=7.5, color=INTI["gray"], style='italic')
+        pdf.savefig(fig); plt.close(fig)
+
+        # 5. 3D actual feature view
         fig = page("Nube 3D de actividad eléctrica", "Corriente y tensión en el plano inferior; tiempo en el eje vertical")
         ax = fig.add_subplot(111, projection="3d")
         sampled = clustered.sample(min(900, len(clustered)), random_state=42) if len(clustered) else clustered
         for cluster in sorted(sampled["cluster"].unique()) if len(sampled) else []:
             sub = sampled[sampled["cluster"] == cluster]
-            ax.scatter(sub["I_total"], sub["V_avg"], sub["hour_of_day"] * 60, s=9, alpha=0.75, color=CLUSTER_COLORS[int(cluster) % len(CLUSTER_COLORS)], label=cluster_info[cluster]["name"][:28])
+            color = cluster_info[cluster].get("color", CLUSTER_COLORS[int(cluster) % len(CLUSTER_COLORS)])
+            gt_tag = " [GT]" if cluster_info[cluster].get("custom_label") else ""
+            label_text = f"{cluster_info[cluster]['name'][:24]}{gt_tag}"
+            ax.scatter(sub["I_total"], sub["V_avg"], sub["hour_of_day"] * 60, s=9, alpha=0.75, color=color, label=label_text)
         ax.set_xlabel("Corriente [A]")
         ax.set_ylabel("Tensión [V]")
         ax.set_zlabel("Tiempo [min]")
@@ -153,13 +243,14 @@ def main():
         ax.legend(loc="upper left", bbox_to_anchor=(0.0, 1.02), fontsize=7, frameon=False)
         pdf.savefig(fig); plt.close(fig)
 
-        # 5. Feature spaces
+        # 6. Feature spaces
         fig = page("Espacios de características", "Separación visual de los eventos según potencia, corriente, reactiva y distorsión")
         axes = fig.subplots(1, 2)
         for cluster in sorted(clustered["cluster"].unique()):
             sub = clustered[clustered["cluster"] == cluster]
-            color = CLUSTER_COLORS[int(cluster) % len(CLUSTER_COLORS)]
-            name = cluster_info[cluster]["name"][:18]
+            color = cluster_info[cluster].get("color", CLUSTER_COLORS[int(cluster) % len(CLUSTER_COLORS)])
+            gt_tag = " [GT]" if cluster_info[cluster].get("custom_label") else ""
+            name = f"{cluster_info[cluster]['name'][:16]}{gt_tag}"
             axes[0].scatter(sub["delta_P"], sub["delta_Q"], s=8, alpha=0.65, color=color, label=name)
             axes[1].scatter(sub["delta_I"], sub["THD_avg"], s=8, alpha=0.65, color=color, label=name)
         axes[0].set_title("ΔP vs ΔQ")
@@ -173,29 +264,34 @@ def main():
         axes[1].legend(fontsize=7, frameon=False, loc="best")
         pdf.savefig(fig); plt.close(fig)
 
-        # 6. Algorithms and identification rules
+        # 7. Algorithms and identification rules
         fig = page("Algoritmos e identificación de equipos", "Qué calcula el sistema y qué parte corresponde a inferencia heurística")
-        fig.text(0.08, 0.78, "Algoritmos", fontsize=14, color=INTI["cyan"], weight="bold")
-        add_wrapped(fig, "K-Means: asigna eventos a centroides y es el método predeterminado. GMM: modela grupos como distribuciones gaussianas y permite solapamiento probabilístico. DBSCAN: agrupa por densidad y puede encontrar eventos atípicos.", 0.08, 0.74, 105, 10)
-        fig.text(0.08, 0.59, "Reglas de interpretación", fontsize=14, color=INTI["cyan"], weight="bold")
-        add_wrapped(fig, "El clustering encuentra grupos eléctricos, pero no conoce el nombre físico del equipo. Después se aplican reglas: ΔP ≥ 25 kW o ΔI ≥ 40 A → motor/compresor principal; THD ≥ 40 % → variador/carga electrónica; ΔP ≥ 8 kW → bomba/ventilador; ΔP ≥ 2 kW → motor mediano; el resto → auxiliar/standby.", 0.08, 0.55, 105, 10)
-        fig.text(0.08, 0.36, "Bibliotecas", fontsize=14, color=INTI["cyan"], weight="bold")
-        add_wrapped(fig, "Backend: pandas para datos tabulares, NumPy para cálculo numérico, scikit-learn para K-Means/GMM/DBSCAN/StandardScaler y Tornado para la API. Frontend: TypeScript y Canvas HTML5 para los gráficos, sin una biblioteca 3D externa.", 0.08, 0.32, 105, 10)
+        fig.text(0.08, 0.78, "Algoritmos de Clasificación", fontsize=14, color=INTI["cyan"], weight="bold")
+        add_wrapped(fig, "K-Means: asigna eventos a centroides y es el método predeterminado. GMM: modela grupos como distribuciones gaussianas con variabilidad de régimen. DBSCAN: agrupa por densidad y separa modos atípicos o ruidos.", 0.08, 0.74, 105, 10)
+        fig.text(0.08, 0.59, "Etiquetado Manual (Ground Truth - Punto B)", fontsize=14, color=INTI["cyan"], weight="bold")
+        add_wrapped(fig, "El sistema permite al operador renombrar cualquier equipo detectado de forma manual. Estas etiquetas se persisten permanentemente en el servidor (backend/load_labels.json) asociadas a la firma y ranking del equipo, sobrescribiendo las heurísticas automáticas tanto en las pantallas interactivas como en los informes PDF emitidos.", 0.08, 0.55, 105, 10)
+        fig.text(0.08, 0.36, "Bibliotecas y Motor", fontsize=14, color=INTI["cyan"], weight="bold")
+        add_wrapped(fig, "Backend: pandas para datos tabulares, NumPy para cálculo numérico, scikit-learn para K-Means/GMM/DBSCAN/StandardScaler y Tornado para la API REST asíncrona. Frontend: TypeScript y Canvas HTML5 para gráficos a 60 FPS sin dependencias externas pesadas.", 0.08, 0.32, 105, 10)
         pdf.savefig(fig); plt.close(fig)
 
-        # 7. Limitations and next steps
+        # 8. Limitations and next steps
         fig = page("Interpretación y próximos pasos", "Resultados actuales y recomendaciones para una identificación más robusta")
         fig.text(0.08, 0.78, "Qué significa el resultado", fontsize=14, color=INTI["cyan"], weight="bold")
-        add_wrapped(fig, "La aplicación identifica patrones de consumo y los agrupa según su firma eléctrica. Los nombres mostrados son categorías inferidas, no una confirmación del modelo exacto de la máquina.", 0.08, 0.74, 105, 10)
-        fig.text(0.08, 0.59, "Limitaciones actuales", fontsize=14, color=INTI["cyan"], weight="bold")
-        add_wrapped(fig, "La potencia se estima a partir de tensión, corriente y factor de potencia; las duraciones se estiman a partir de las transiciones de apagado (con heurística si no existe apagado limpio); y los umbrales de identificación son reglas fijas.", 0.08, 0.55, 105, 10)
+        add_wrapped(fig, "La aplicación identifica patrones de consumo y los agrupa según su firma eléctrica. Los nombres mostrados combinan inferencias físicas automáticas con las validaciones Ground Truth introducidas por el operador.", 0.08, 0.74, 105, 10)
+        fig.text(0.08, 0.59, "Limitaciones y conservación de potencia", fontsize=14, color=INTI["cyan"], weight="bold")
+        add_wrapped(fig, "La potencia se calcula a partir del registro del analizador trifásico. Para el perfeccionamiento continuo, se avanza hacia modelos de Conservación Estricta de Energía (Punto C) y Optimización Combinatoria para asegurar que la suma de potencias desagregadas más la base iguale exactamente la potencia total en cada instante.", 0.08, 0.55, 105, 10)
         fig.text(0.08, 0.4, "Mejoras recomendadas", fontsize=14, color=INTI["cyan"], weight="bold")
-        add_wrapped(fig, "Validar contra mediciones individuales por equipo, usar duración y armónicos como características, entrenar un clasificador supervisado con etiquetas reales y evaluar precisión, recall, F1 y error de energía.", 0.08, 0.36, 105, 10)
+        add_wrapped(fig, "Completar la validación Ground Truth con mediciones de sub-medición de contraste, entrenar clasificadores supervisados con las etiquetas guardadas y evaluar métricas estándar de desagregación (F1-score, MAE, SAE).", 0.08, 0.36, 105, 10)
         fig.text(0.08, 0.16, "Conclusión", fontsize=14, color=INTI["cyan"], weight="bold")
-        add_wrapped(fig, "El sistema actual constituye una base funcional de NILM: detecta cambios, construye firmas, agrupa eventos y reconstruye curvas aproximadas por carga.", 0.08, 0.12, 105, 10)
+        add_wrapped(fig, "El sistema actual constituye una plataforma profesional completa de NILM: detecta eventos, clasifica firmas eléctricas, resporta desgloses energéticos y sincroniza el conocimiento del operador con el motor de IA.", 0.08, 0.12, 105, 10)
         pdf.savefig(fig); plt.close(fig)
 
-    print(f"PDF generado: {OUTPUT}")
+    print(f"PDF generado: {output_path}")
+    return output_path
+
+
+def main():
+    generate_report()
 
 
 if __name__ == "__main__":

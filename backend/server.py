@@ -153,6 +153,23 @@ class LabelsHandler(BaseHandler):
             self.set_status(400)
             self.write_json({"status": "error", "message": str(e)})
 
+    def delete(self):
+        try:
+            dataset_id = self.get_argument("dataset_id", "")
+            if not dataset_id and self.request.body:
+                try:
+                    req = tornado.escape.json_decode(self.request.body)
+                    dataset_id = str(req.get("dataset_id", "")).strip()
+                except Exception:
+                    pass
+            if not dataset_id:
+                raise ValueError("dataset_id es requerido")
+            labels = dm.clear_labels(dataset_id)
+            self.write_json({"status": "success", "data": {"labels": labels, "message": "Etiquetas restablecidas a valores automáticos"}})
+        except Exception as e:
+            self.set_status(400)
+            self.write_json({"status": "error", "message": str(e)})
+
 class AnalyzeHandler(BaseHandler):
     def get(self):
         self.post()
@@ -179,8 +196,10 @@ class AnalyzeHandler(BaseHandler):
                 use_fhmm = bool(use_fhmm_raw)
             max_states = int(req_data.get("max_states") or self.get_argument("max_states", "3"))
 
-            # Manual Ground-Truth labels persisted for this dataset
-            labels = dm.get_labels(dataset_id)
+            # Manual Ground-Truth labels persisted for this dataset (or passed in request)
+            labels = req_data.get("labels")
+            if not labels or not isinstance(labels, dict):
+                labels = dm.get_labels(dataset_id)
 
             result = nilm.analyze_dataset(
                 dataset_id=dataset_id,
@@ -200,14 +219,33 @@ class AnalyzeHandler(BaseHandler):
 class ReportHandler(BaseHandler):
     def get(self):
         try:
-            pdf_path = os.path.join(BASE_DIR, "Informe_NILM_Inti.pdf")
-            if not os.path.exists(pdf_path):
+            dataset_id = self.get_argument("dataset_id", "coop_gouge_v2_10_abril")
+            n_clusters = int(self.get_argument("n_clusters", "4"))
+            algorithm = self.get_argument("algorithm", "kmeans")
+
+            reports_dir = os.path.join(BASE_DIR, "reports")
+            os.makedirs(reports_dir, exist_ok=True)
+            pdf_path = os.path.join(reports_dir, f"Informe_NILM_{dataset_id}.pdf")
+            default_pdf = os.path.join(BASE_DIR, "Informe_NILM_Inti.pdf")
+
+            from scripts.generate_report import generate_report
+            labels = dm.get_labels(dataset_id)
+            generate_report(
+                dataset_id=dataset_id,
+                n_clusters=n_clusters,
+                algorithm=algorithm,
+                output_path=Path(pdf_path),
+                labels=labels
+            )
+
+            target_path = pdf_path if os.path.exists(pdf_path) else default_pdf
+            if not os.path.exists(target_path):
                 self.set_status(404)
                 self.write_json({"status": "error", "message": "Informe PDF no encontrado."})
                 return
             self.set_header("Content-Type", "application/pdf")
-            self.set_header("Content-Disposition", 'inline; filename="Informe_NILM_Inti.pdf"')
-            with open(pdf_path, "rb") as f:
+            self.set_header("Content-Disposition", f'inline; filename="Informe_NILM_{dataset_id}.pdf"')
+            with open(target_path, "rb") as f:
                 self.write(f.read())
         except Exception as e:
             self.set_status(500)

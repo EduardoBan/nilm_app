@@ -95,6 +95,25 @@ class NILMApp {
       });
     }
 
+    // Reset Ground Truth custom labels (Punto B)
+    const btnResetLabels = document.getElementById('btn-reset-labels');
+    btnResetLabels?.addEventListener('click', async () => {
+      if (!this.currentDatasetId) return;
+      if (confirm('¿Deseas restablecer los nombres de las cargas a sus valores automáticos? Se borrarán las etiquetas personalizadas para esta medición.')) {
+        try {
+          this.showLoading(true);
+          await api.clearLabels(this.currentDatasetId);
+          this.showToast('Etiquetas personalizadas restablecidas', 'success');
+          await this.runNILMAnalysis();
+        } catch (err: any) {
+          console.error(err);
+          this.showToast(`Error al restablecer etiquetas: ${err.message}`, 'error');
+        } finally {
+          this.showLoading(false);
+        }
+      }
+    });
+
     // Tabs
     const tabButtons = document.querySelectorAll('.nav-tab');
     tabButtons.forEach(btn => {
@@ -228,6 +247,13 @@ class NILMApp {
       this.harmonics = harm;
 
       this.updateKPIs();
+
+      // Update PDF report link with current dataset
+      const reportLink = document.getElementById('report-link-btn') as HTMLAnchorElement;
+      if (reportLink && this.currentDatasetId) {
+        reportLink.href = `/api/report?dataset_id=${encodeURIComponent(this.currentDatasetId)}`;
+      }
+
       await this.runNILMAnalysis();
     } catch (err: any) {
       console.error(err);
@@ -298,10 +324,32 @@ class NILMApp {
     this.analysis.machine_statistics.forEach(m => {
       const tr = document.createElement('tr');
       const loadBadge = m.load_class
-        ? `<span class="load-badge load-${m.load_family || 'inductiva'}">${m.load_icon || '⚙️'} ${m.load_class}</span>`
+        ? `<span class="load-badge load-${m.load_family || 'inductiva'}'">${m.load_icon || '⚙️'} ${m.load_class}</span>`
         : `<span class="badge-cat">${m.category}</span>`;
+      
+      // Opción A: modelado multi-estado FHMM — chips por cada nivel de estado
+      let statesHtml = '';
+      if (m.states && m.states.length > 1) {
+        statesHtml = `<div class="machine-states">` +
+          m.states.filter(s => s.kw > 0).map(s =>
+            `<span class="state-chip" style="border-color:${m.color}">
+               <span class="state-chip-name">${s.name}</span>
+               <span class="state-chip-kw">${s.kw.toFixed(2)} kW</span>
+               <span class="state-chip-min">${s.minutes.toFixed(0)} min</span>
+             </span>`
+          ).join('') +
+          `</div>`;
+      }
+      
       tr.innerHTML = `
-        <td><span class="badge-color" style="background:${m.color}"></span> <strong class="editable-name" data-machine="${m.id}" title="Click en ✏️ para renombrar (Ground Truth)">${m.name}</strong> <button class="edit-btn" data-edit="${m.id}" title="Renombrar equipo (Ground Truth)">✏️</button>${m.custom_label ? ' <span class="gt-flag" title="Etiqueta personalizada guardada">GT</span>' : ''}</td>
+        <td>
+          <span class="badge-color" style="background:${m.color}"></span>
+          <strong class="editable-name" data-machine="${m.id}" title="Click en ✏️ para renombrar (Ground Truth)">${m.name}</strong>
+          <button class="edit-btn" data-edit="${m.id}" title="Renombrar equipo (Ground Truth)">✏️</button>
+          ${m.custom_label ? ' <span class="gt-flag" title="Etiqueta personalizada guardada">GT</span>' : ''}
+          ${(m.states && m.states.length > 1) ? `<span class="state-count-badge" title="Modo multi-estado FHMM"><span class="flag">🧠</span> ${m.states.length} estados</span>` : ''}
+          ${statesHtml}
+        </td>
         <td>${loadBadge}</td>
         <td><strong>${m.nominal_power_kw.toFixed(1)} kW</strong></td>
         <td>${m.peak_current_a.toFixed(1)} A</td>
@@ -365,6 +413,7 @@ class NILMApp {
       const newName = input.value.trim();
       if (!commit || !newName || newName === original) {
         this.updateApplianceTable();
+        this.renderMachinesTab();
         this.renderCurrentTabCharts();
         return;
       }
@@ -377,6 +426,7 @@ class NILMApp {
           console.error(err);
           this.showToast(`Error guardando etiqueta: ${err.message}`, 'error');
           this.updateApplianceTable();
+          this.renderMachinesTab();
           this.renderCurrentTabCharts();
         });
     };
@@ -487,7 +537,11 @@ class NILMApp {
       card.innerHTML = `
         <div class="mc-header">
           <div>
-            <h3 style="color:${m.color}">${m.name}</h3>
+            <h3 style="color:${m.color}">
+              <span class="editable-name" data-machine="${m.id}" title="Click en ✏️ para renombrar (Ground Truth)">${m.name}</span>
+              <button class="edit-btn" data-edit="${m.id}" title="Renombrar equipo (Ground Truth)">✏️</button>
+              ${m.custom_label ? ' <span class="gt-flag" title="Etiqueta personalizada guardada (Ground Truth)">GT</span>' : ''}
+            </h3>
             <span class="mc-category">${m.category}</span>
           </div>
           <span class="mc-status badge-status status-active">${m.status}</span>
@@ -518,9 +572,44 @@ class NILMApp {
             <span class="mc-stat-val">${m.energy_kwh.toFixed(2)} kWh (${m.energy_share_pct.toFixed(1)}%)</span>
           </div>
         </div>
+        ${this.renderMachineStatesBlock(m)}
       `;
       container.appendChild(card);
     });
+
+    // Bind Ground-Truth rename buttons in cards
+    container.querySelectorAll<HTMLButtonElement>('button.edit-btn').forEach(btn => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const id = parseInt(btn.dataset['edit'] || '0', 10);
+        const nameSpan = container.querySelector<HTMLElement>(`.editable-name[data-machine="${id}"]`);
+        if (nameSpan) this.startRename(id, nameSpan);
+      });
+    });
+  }
+
+  /** Opción A: desglose de estados multi-nivel FHMM en las fichas técnicas */
+  private renderMachineStatesBlock(m: any): string {
+    if (!m.states || m.states.length <= 1) return '';
+    const maxMin = Math.max(1, ...m.states.map((s: any) => s.minutes || 0));
+    const rows = m.states
+      .filter((s: any) => s.kw > 0)
+      .map((s: any) => `
+        <div class="state-row">
+          <span class="state-name">${s.name}</span>
+          <div class="state-bar">
+            <span style="width:${Math.max(2, Math.round((s.minutes || 0) / maxMin * 100))}%; background:${m.color}"></span>
+          </div>
+          <span class="state-val">${s.kw.toFixed(2)} kW · ${s.minutes.toFixed(0)} min (${s.share_pct.toFixed(1)}%)</span>
+        </div>
+      `).join('');
+    if (!rows) return '';
+    return `
+      <div class="mc-states">
+        <span class="mc-states-title">🧠 Estados de Operación (FHMM Multi-Nivel)</span>
+        ${rows}
+      </div>
+    `;
   }
 
   private renderTimelineTab() {
