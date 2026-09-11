@@ -481,14 +481,18 @@ class ChartEngine {
       ctx.restore();
 
       const projectedPoints = events.map((ev, idx) => {
-        const p = project3D(ev.x, ev.y, ev.z);
+        // project3D espera coordenadas normalizadas del cubo (0..1):
+        // x01 = corriente/maxX, y01 = normY(tension), z01 = tiempo/maxZ.
+        // Sin normalizar, los puntos se proyectan a miles de pixeles fuera
+        // del canvas y la nube 3D aparece vacia.
+        const p = project3D(Math.abs(ev.x) / maxX, normY(ev.y), ev.z / maxZ);
         return { ...ev, idx, px: p.x, py: p.y, scale: p.scale };
       }).filter(ev => !state.hiddenClusters.has(ev.cluster));
 
       projectedPoints.forEach(ev => {
         const active = state.hoverIndex === ev.idx;
         ctx.beginPath();
-        ctx.arc(ev.px, ev.py, active ? 7.5 : 5.2 * ev.scale, 0, Math.PI * 2);
+        ctx.arc(ev.px, ev.py, active ? 7.5 : Math.max(2.2, 5.2 * ev.scale), 0, Math.PI * 2);
         ctx.fillStyle = ev.color;
         ctx.fill();
         ctx.strokeStyle = '#FFFFFF';
@@ -539,7 +543,8 @@ class ChartEngine {
       let bestDist = Infinity;
       events.forEach((ev, idx) => {
         if (state.hiddenClusters.has(ev.cluster)) return;
-        const p = project3D(ev.x, ev.y, ev.z);
+        // Misma normalizacion que en el dibujo (cube coords 0..1)
+        const p = project3D(Math.abs(ev.x) / maxX, normY(ev.y), ev.z / maxZ);
         const dist = Math.hypot(mx - p.x, my - p.y);
         if (dist < 12 && dist < bestDist) {
           bestDist = dist;
