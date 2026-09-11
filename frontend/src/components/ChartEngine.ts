@@ -198,18 +198,21 @@ export class ChartEngine {
 
     draw();
 
-    // Mouse events
+    // Mouse events (throttled con rAF: evita re-dibujar 100x/seg con 6 series x 1000 pts)
+    let hoverQueued = false;
     const onMouseMove = (e: MouseEvent) => {
       const b = canvas.getBoundingClientRect();
       const mx = e.clientX - b.left;
+      let next: number | null = null;
       if (mx >= padLeft && mx <= padLeft + plotW) {
         const ratio = (mx - padLeft) / plotW;
-        hoverIdx = Math.round(ratio * (labels.length - 1));
-        draw();
-      } else {
-        if (hoverIdx !== null) {
-          hoverIdx = null;
-          draw();
+        next = Math.round(ratio * (labels.length - 1));
+      }
+      if (next !== hoverIdx) {
+        hoverIdx = next;
+        if (!hoverQueued) {
+          hoverQueued = true;
+          requestAnimationFrame(() => { hoverQueued = false; draw(); });
         }
       }
     };
@@ -829,7 +832,13 @@ export class ChartEngine {
       const track = document.createElement('div');
       track.className = 'gantt-track';
 
-      const mIntervals = intervals.filter(it => it.machine_id === m.id);
+      const mIntervals = intervals.filter(it => Number(it.machine_id) === Number(m.id));
+      if (mIntervals.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'gantt-empty';
+        empty.textContent = 'Sin operación';
+        track.appendChild(empty);
+      }
       mIntervals.forEach(it => {
         const startParts = it.start_time.split(':').map(Number);
         const endParts = it.end_time.split(':').map(Number);
@@ -898,7 +907,7 @@ export class ChartEngine {
     // Merge consecutive / overlapping intervals into readable operation blocks
     const buildBlocks = (machineId: number) => {
       const ranges = intervals
-        .filter(it => it.machine_id === machineId)
+        .filter(it => Number(it.machine_id) === Number(machineId))
         .map(it => {
           const s = parseSec(it.start_time);
           let e = parseSec(it.end_time);

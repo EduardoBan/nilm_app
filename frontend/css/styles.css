@@ -759,6 +759,181 @@ body {
   box-shadow: 0 0 8px rgba(255, 255, 255, 0.4);
 }
 
+.gantt-empty {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  font-style: italic;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   Operation Level Lines (Líneas de Nivel de Operación)
+   ========================================================================== */
+.levels-wrapper {
+  background: var(--bg-card-sub);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.levels-header {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 8px;
+}
+
+.levels-label-col {
+  width: 240px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.levels-track-header {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+}
+
+.levels-hour {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  font-family: monospace;
+}
+
+.levels-row {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.25);
+  padding: 4px 0;
+}
+
+.levels-row:last-child {
+  border-bottom: none;
+}
+
+.levels-label {
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-right: 12px;
+  overflow: hidden;
+}
+
+.levels-label-main {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.levels-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.levels-meta {
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  margin-top: 1px;
+}
+
+.levels-track {
+  position: relative;
+  flex: 1;
+  height: 34px;
+  background: repeating-linear-gradient(to right,
+      transparent 0, transparent calc(12.5% - 1px),
+      var(--border-color) calc(12.5% - 1px), var(--border-color) 12.5%);
+  background-color: var(--bg-card-sub);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  min-width: 0;
+}
+
+/* Línea horizontal continua de referencia (día completo) */
+.levels-baseline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  background: repeating-linear-gradient(to right,
+      var(--border-color) 0 4px, transparent 4px 8px);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.levels-gridline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(113, 113, 113, 0.35);
+  pointer-events: none;
+}
+
+.levels-block {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 12px;
+  border-radius: 6px;
+  opacity: 0.9;
+  cursor: pointer;
+  transition: opacity 0.15s, height 0.15s;
+}
+
+.levels-block:hover {
+  opacity: 1;
+  height: 16px;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.4);
+}
+
+.levels-time-label {
+  position: absolute;
+  top: 0;
+  font-size: 0.6rem;
+  color: var(--text-dim);
+  font-family: monospace;
+  pointer-events: none;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.levels-time-start {
+  transform: translateX(-5px);
+}
+
+.levels-time-end {
+  transform: translateX(5px);
+}
+
+.levels-time-mid {
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
 /* Loading Overlay */
 .loading-overlay {
   position: fixed;
@@ -1046,6 +1221,27 @@ body {
   font-family: monospace;
   font-size: 0.7rem;
   white-space: nowrap;
+}
+
+/* Estado vacio reutilizable (Gantt sin intervalos, sin datasets, etc.) */
+.empty-state {
+  background: var(--bg-card-sub);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  margin: 12px 0;
+  padding: 28px 20px;
+  text-align: center;
+}
+
+.empty-state-icon {
+  font-size: 2rem;
+  margin-bottom: 8px;
+}
+
+.empty-state p {
+  margin: 4px auto;
+  max-width: 640px;
 }
 
 /* ==========================================================================

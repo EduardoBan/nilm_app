@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+from pathlib import Path
 import numpy as np
 import tornado.ioloop
 import tornado.web
@@ -113,6 +114,16 @@ class UploadHandler(BaseHandler):
                 self.write_json({"status": "error", "message": f"Extensión no soportada '{ext}'. Usa .xlsx, .xls o .csv."})
                 return
 
+            MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB: evita saturar disco/RAM
+            if len(content) > MAX_UPLOAD_BYTES:
+                self.set_status(413)
+                self.write_json({"status": "error", "message": "Archivo demasiado grande (máx. 100 MB)."})
+                return
+            if not content:
+                self.set_status(400)
+                self.write_json({"status": "error", "message": "Archivo vacío."})
+                return
+
             dest = dm.save_upload(filename, content)
             dataset_id = dm.get_slug(os.path.basename(dest))
             info = {
@@ -185,9 +196,22 @@ class AnalyzeHandler(BaseHandler):
 
             dataset_id = req_data.get("dataset_id") or self.get_argument("dataset_id", "coop_gouge_v2_10_abril")
             n_clusters = int(req_data.get("n_clusters") or self.get_argument("n_clusters", "4"))
-            algorithm = str(req_data.get("algorithm") or self.get_argument("algorithm", "kmeans"))
+            algorithm = str(req_data.get("algorithm") or self.get_argument("algorithm", "kmeans")).lower().strip()
             current_threshold = float(req_data.get("current_threshold") or self.get_argument("current_threshold", "2.0"))
             power_threshold = float(req_data.get("power_threshold") or self.get_argument("power_threshold", "1.0"))
+
+            # --- Validación de parámetros (evita K=100, umbrales negativos, path traversal) ---
+            import re as _re
+            if not _re.fullmatch(r"[a-z0-9_\-]+", str(dataset_id)):
+                raise ValueError("dataset_id inválido (solo a-z, 0-9, _ y -)")
+            if algorithm not in ("kmeans", "gmm", "dbscan"):
+                raise ValueError(f"algorithm '{algorithm}' no soportado (kmeans|gmm|dbscan)")
+            if not 2 <= n_clusters <= 10:
+                raise ValueError("n_clusters debe estar entre 2 y 10")
+            if not 0.1 <= current_threshold <= 50:
+                raise ValueError("current_threshold debe estar entre 0.1 y 50 A")
+            if not 0.05 <= power_threshold <= 50:
+                raise ValueError("power_threshold debe estar entre 0.05 y 50 kW")
 
             use_fhmm_raw = req_data.get("use_fhmm")
             if use_fhmm_raw is None:
@@ -195,6 +219,8 @@ class AnalyzeHandler(BaseHandler):
             else:
                 use_fhmm = bool(use_fhmm_raw)
             max_states = int(req_data.get("max_states") or self.get_argument("max_states", "3"))
+            if not 1 <= max_states <= 5:
+                raise ValueError("max_states debe estar entre 1 y 5")
 
             # Manual Ground-Truth labels persisted for this dataset (or passed in request)
             labels = req_data.get("labels")
@@ -212,6 +238,13 @@ class AnalyzeHandler(BaseHandler):
                 labels=labels
             )
             self.write_json({"status": "success", "data": result})
+        except ValueError as e:
+            # Parámetros inválidos -> 400 (no 500)
+            self.set_status(400)
+            self.write_json({"status": "error", "message": str(e)})
+        except FileNotFoundError as e:
+            self.set_status(404)
+            self.write_json({"status": "error", "message": str(e)})
         except Exception as e:
             self.set_status(500)
             self.write_json({"status": "error", "message": str(e)})

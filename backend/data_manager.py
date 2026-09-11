@@ -2,8 +2,12 @@ import os
 import glob
 import json
 import time
+import tempfile
+import threading
 import pandas as pd
 import numpy as np
+
+VALID_EXTENSIONS = (".xlsx", ".xls", ".csv")
 
 class DataManager:
     """
@@ -18,13 +22,25 @@ class DataManager:
             else:
                 data_dir = os.path.join(base_dir, "Data")
         if cache_dir is None:
-            cache_dir = os.path.join(os.path.dirname(data_dir), "cache")
+            cache_dir = os.path.join(base_dir, "cache")
 
         self.data_dir = data_dir
         self.cache_dir = cache_dir
         os.makedirs(self.data_dir, exist_ok=True)
         os.makedirs(self.cache_dir, exist_ok=True)
         self._memory_cache = {}
+        self._memory_order = []  # LRU: evita crecimiento infinito de RAM
+        self._memory_limit = 4
+
+    def _remember(self, dataset_id: str, df) -> None:
+        """Guarda en caché RAM con política LRU (máx. _memory_limit datasets)."""
+        if dataset_id in self._memory_cache:
+            self._memory_order.remove(dataset_id)
+        self._memory_cache[dataset_id] = df
+        self._memory_order.append(dataset_id)
+        while len(self._memory_order) > self._memory_limit:
+            oldest = self._memory_order.pop(0)
+            self._memory_cache.pop(oldest, None)
 
     def save_upload(self, filename: str, content: bytes) -> str:
         clean_name = os.path.basename(filename)
@@ -34,6 +50,8 @@ class DataManager:
         slug = self.get_slug(clean_name)
         if slug in self._memory_cache:
             del self._memory_cache[slug]
+        if slug in self._memory_order:
+            self._memory_order.remove(slug)
         pkl_path = os.path.join(self.cache_dir, f"{slug}.pkl")
         if os.path.exists(pkl_path):
             try:
@@ -43,8 +61,14 @@ class DataManager:
         return dest_path
 
     def get_slug(self, filename: str) -> str:
-        base = os.path.basename(filename)
-        return base.replace(".xlsx", "").replace(".xls", "").replace(".csv", "").replace(" ", "_").lower()
+        base = os.path.basename(filename).strip()
+        # Insensible a mayúsculas (.XLSX/.XLS/.CSV) y a espacios
+        low = base.lower()
+        for ext in VALID_EXTENSIONS:
+            if low.endswith(ext):
+                base = base[: -len(ext)]
+                break
+        return base.replace(" ", "_").lower()
 
     # ------------------------------------------------------------------
     # Manual Ground-Truth appliance labels (Opción A - Punto 2)
@@ -62,10 +86,24 @@ class DataManager:
         except (OSError, ValueError):
             return {}
 
+    # + hilo: protege load_labels.json ante POST concurrentes.
+    _labels_lock = threading.Lock()
+
     def _write_labels(self, data: dict) -> None:
+        """Escritura atómica (tmp + rename) para no corromper ante cortes/concurrentes."""
+        path = self._labels_file()
         try:
-            with open(self._labels_file(), "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                os.replace(tmp, path)
+            except BaseException:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                raise
         except OSError:
             pass
 
@@ -75,36 +113,47 @@ class DataManager:
 
     def set_label(self, dataset_id: str, cluster_id: int, name: str) -> dict:
         """Stores (or clears, when name is empty) a custom appliance label."""
-        data = self._read_labels()
-        bucket = data.get(dataset_id, {})
         clean = (name or "").strip()
-        if clean:
-            bucket[str(int(cluster_id))] = clean
-        else:
-            bucket.pop(str(int(cluster_id)), None)
-        if bucket:
-            data[dataset_id] = bucket
-        else:
-            data.pop(dataset_id, None)
-        self._write_labels(data)
-        return dict(bucket)
+        if clean and len(clean) > 80:
+            raise ValueError("El nombre personalizado no puede superar 80 caracteres")
+        with self._labels_lock:
+            data = self._read_labels()
+            bucket = data.get(dataset_id, {})
+            if clean:
+                bucket[str(int(cluster_id))] = clean
+            else:
+                bucket.pop(str(int(cluster_id)), None)
+            if bucket:
+                data[dataset_id] = bucket
+            else:
+                data.pop(dataset_id, None)
+            self._write_labels(data)
+            return dict(bucket)
 
     def clear_labels(self, dataset_id: str) -> dict:
         """Clears all manual Ground-Truth labels for the dataset."""
-        data = self._read_labels()
-        data.pop(dataset_id, None)
-        self._write_labels(data)
-        return {}
+        with self._labels_lock:
+            data = self._read_labels()
+            data.pop(dataset_id, None)
+            self._write_labels(data)
+            return {}
 
     def list_datasets(self):
-        files = sorted(glob.glob(os.path.join(self.data_dir, "*.xlsx")) + glob.glob(os.path.join(self.data_dir, "*.csv")))
+        files = sorted(f for ext in VALID_EXTENSIONS
+                       for f in glob.glob(os.path.join(self.data_dir, f"*{ext}")))
         datasets = []
         for f in files:
             slug = self.get_slug(f)
             pkl_path = os.path.join(self.cache_dir, f"{slug}.pkl")
             is_cached = os.path.exists(pkl_path)
-            
-            label = os.path.basename(f).replace("coop gouge V2 ", "").replace(".xlsx", "").replace(".csv", "").capitalize()
+
+            base = os.path.basename(f)
+            label = base
+            for ext in VALID_EXTENSIONS:
+                if label.lower().endswith(ext):
+                    label = label[: -len(ext)]
+                    break
+            label = label.replace("coop gouge V2 ", "").replace("_", " ").strip().capitalize()
             
             datasets.append({
                 "id": slug,
@@ -123,7 +172,7 @@ class DataManager:
         if os.path.exists(pkl_path):
             try:
                 df = pd.read_pickle(pkl_path)
-                self._memory_cache[dataset_id] = df
+                self._remember(dataset_id, df)
                 return df
             except (ValueError, TypeError, ImportError, NotImplementedError):
                 # Rebuild caches created with an incompatible pandas version.
@@ -165,7 +214,7 @@ class DataManager:
         df_clean = df_clean.dropna(subset=['timestamp']).sort_values('timestamp').reset_index(drop=True)
 
         df_clean.to_pickle(pkl_path)
-        self._memory_cache[dataset_id] = df_clean
+        self._remember(dataset_id, df_clean)
         return df_clean
 
     def get_summary_stats(self, dataset_id: str):

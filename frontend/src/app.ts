@@ -5,17 +5,27 @@
 
 import { api } from './services/api';
 import { ChartEngine } from './components/ChartEngine';
-import { 
-  DatasetInfo, 
-  SummaryStats, 
-  TimeseriesData, 
-  HarmonicsData, 
-  NILMAnalysisResult, 
-  ActiveTab 
+import {
+  DatasetInfo,
+  SummaryStats,
+  TimeseriesData,
+  HarmonicsData,
+  NILMAnalysisResult,
+  ActiveTab
 } from './types/nilm';
 
+/** Escapa HTML para evitar XSS via nombres Ground-Truth personalizados. */
+function escapeHtml(s: string): string {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 class NILMApp {
-  private currentDatasetId: string = 'coop_gouge_v2_10_abril';
+  private currentDatasetId: string = '';
   private datasets: DatasetInfo[] = [];
   private summary: SummaryStats | null = null;
   private timeseries: TimeseriesData | null = null;
@@ -162,10 +172,19 @@ class NILMApp {
       this.datasets = await api.getDatasets();
 
       if (this.datasets.length > 0) {
-        this.currentDatasetId = this.datasets[0].id;
-        this.updateFileLabel(this.datasets[0].filename);
+        // Conserva el dataset guardado si aún existe; si no, usa el primero
+        // disponible (antes se forzaba siempre datasets[0] + hardcode).
+        const stillThere = this.currentDatasetId
+          && this.datasets.some(d => d.id === this.currentDatasetId);
+        if (!stillThere) this.currentDatasetId = this.datasets[0].id;
+        const found = this.datasets.find(d => d.id === this.currentDatasetId);
+        this.updateFileLabel(found ? found.filename : this.datasets[0].filename);
       } else {
+        this.currentDatasetId = '';
         this.updateFileLabel(null);
+        this.updateDatasetSelect();
+        this.showToast('No hay mediciones en la carpeta Data. Sube un .xlsx/.xls/.csv.', 'error');
+        return;
       }
       this.updateDatasetSelect();
 
@@ -287,7 +306,9 @@ class NILMApp {
       this.updateApplianceTable();
       this.renderCurrentTabCharts();
       const mode = this.analysis.fhmm_enabled ? 'FHMM multi-estado' : 'ON/OFF binario';
-      this.showToast(`Análisis NILM completado (${this.analysis.total_events_detected} eventos · modo ${mode})`, 'success');
+      const warn = (this.analysis as any).warning;
+      if (warn) this.showToast(warn, 'info');
+      this.showToast(`Análisis NILM completado (${this.analysis.total_events_detected} eventos · ${this.analysis.timeline_intervals.length} intervalos Gantt · modo ${mode})`, 'success');
     } catch (err: any) {
       console.error(err);
       this.showToast(`Error ejecutando análisis NILM: ${err.message}`, 'error');
@@ -323,9 +344,12 @@ class NILMApp {
 
     this.analysis.machine_statistics.forEach(m => {
       const tr = document.createElement('tr');
+      const safeName = escapeHtml(m.name);
+      const safeCategory = escapeHtml(m.category);
+      const safeLoadClass = m.load_class ? escapeHtml(m.load_class) : '';
       const loadBadge = m.load_class
-        ? `<span class="load-badge load-${m.load_family || 'inductiva'}'">${m.load_icon || '⚙️'} ${m.load_class}</span>`
-        : `<span class="badge-cat">${m.category}</span>`;
+        ? `<span class="load-badge load-${m.load_family || 'inductiva'}'">${m.load_icon || 'x'} ${safeLoadClass}</span>`
+        : `<span class="badge-cat">${safeCategory}</span>`;
       
       // Opción A: modelado multi-estado FHMM — chips por cada nivel de estado
       let statesHtml = '';
@@ -333,7 +357,7 @@ class NILMApp {
         statesHtml = `<div class="machine-states">` +
           m.states.filter(s => s.kw > 0).map(s =>
             `<span class="state-chip" style="border-color:${m.color}">
-               <span class="state-chip-name">${s.name}</span>
+               <span class="state-chip-name">${escapeHtml(s.name)}</span>
                <span class="state-chip-kw">${s.kw.toFixed(2)} kW</span>
                <span class="state-chip-min">${s.minutes.toFixed(0)} min</span>
              </span>`
@@ -344,8 +368,8 @@ class NILMApp {
       tr.innerHTML = `
         <td>
           <span class="badge-color" style="background:${m.color}"></span>
-          <strong class="editable-name" data-machine="${m.id}" title="Click en ✏️ para renombrar (Ground Truth)">${m.name}</strong>
-          <button class="edit-btn" data-edit="${m.id}" title="Renombrar equipo (Ground Truth)">✏️</button>
+          <strong class="editable-name" data-machine="${m.id}" title="Click en renombrar (Ground Truth)">${safeName}</strong>
+          <button class="edit-btn" data-edit="${m.id}" title="Renombrar equipo (Ground Truth)">E</button>
           ${m.custom_label ? ' <span class="gt-flag" title="Etiqueta personalizada guardada">GT</span>' : ''}
           ${(m.states && m.states.length > 1) ? `<span class="state-count-badge" title="Modo multi-estado FHMM"><span class="flag">🧠</span> ${m.states.length} estados</span>` : ''}
           ${statesHtml}
@@ -400,6 +424,7 @@ class NILMApp {
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'rename-input';
+    input.maxLength = 80;
     input.value = original;
     input.title = 'Enter: guardar · Esc: cancelar';
     host.appendChild(input);
@@ -410,7 +435,7 @@ class NILMApp {
     const finish = (commit: boolean) => {
       if (done) return;
       done = true;
-      const newName = input.value.trim();
+      const newName = input.value.trim().slice(0, 80);
       if (!commit || !newName || newName === original) {
         this.updateApplianceTable();
         this.renderMachinesTab();
@@ -534,15 +559,17 @@ class NILMApp {
       const card = document.createElement('div');
       card.className = 'machine-card';
       card.style.borderLeft = `5px solid ${m.color}`;
+      const safeName = escapeHtml(m.name);
+      const safeCategory = escapeHtml(m.category);
       card.innerHTML = `
         <div class="mc-header">
           <div>
             <h3 style="color:${m.color}">
-              <span class="editable-name" data-machine="${m.id}" title="Click en ✏️ para renombrar (Ground Truth)">${m.name}</span>
-              <button class="edit-btn" data-edit="${m.id}" title="Renombrar equipo (Ground Truth)">✏️</button>
+              <span class="editable-name" data-machine="${m.id}" title="Renombrar (Ground Truth)">${safeName}</span>
+              <button class="edit-btn" data-edit="${m.id}" title="Renombrar equipo (Ground Truth)">E</button>
               ${m.custom_label ? ' <span class="gt-flag" title="Etiqueta personalizada guardada (Ground Truth)">GT</span>' : ''}
             </h3>
-            <span class="mc-category">${m.category}</span>
+            <span class="mc-category">${safeCategory}</span>
           </div>
           <span class="mc-status badge-status status-active">${m.status}</span>
         </div>
@@ -596,7 +623,7 @@ class NILMApp {
       .filter((s: any) => s.kw > 0)
       .map((s: any) => `
         <div class="state-row">
-          <span class="state-name">${s.name}</span>
+          <span class="state-name">${escapeHtml(s.name)}</span>
           <div class="state-bar">
             <span style="width:${Math.max(2, Math.round((s.minutes || 0) / maxMin * 100))}%; background:${m.color}"></span>
           </div>
@@ -617,17 +644,41 @@ class NILMApp {
     const container = document.getElementById('gantt-container');
     if (!container) return;
 
+    // machine_id llega como number desde NumpyEncoder; normalizar por si
+    // algun backend lo serializa como string ("0" !== 0 y el filtro del
+    // Gantt dejaba todas las filas vacias).
     const machines = this.analysis.machine_statistics.map(m => ({
-      id: m.id,
-      name: m.name,
+      id: Number(m.id),
+      name: escapeHtml(m.name),
       color: m.color
     }));
 
-    ChartEngine.renderGanttTimeline(container, machines, this.analysis.timeline_intervals);
+    const intervals = (this.analysis.timeline_intervals || []).map(iv => ({
+      ...iv,
+      machine_id: Number((iv as any).machine_id),
+      machine_name: escapeHtml(iv.machine_name || ''),
+      // El backend FHMM envia `state`; el normal no tiene estado.
+      state_name: iv.state_name || (iv as any).state || undefined
+    }));
+
+    if (intervals.length === 0) {
+      const warn = (this.analysis as any).warning;
+      container.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon">📭</div>
+          <p><strong>Sin intervalos de operación para mostrar.</strong></p>
+          <p>${escapeHtml(warn || 'Solo se detectaron ' + this.analysis.total_events_detected + ' eventos. Baja el umbral de corriente (p. ej. 0.5 A) o reduce el N° de equipos y re-ejecuta el análisis.')}</p>
+        </div>`;
+      const levelsContainer = document.getElementById('operation-levels-container');
+      if (levelsContainer) levelsContainer.innerHTML = '';
+      return;
+    }
+
+    ChartEngine.renderGanttTimeline(container, machines, intervals as any);
 
     const levelsContainer = document.getElementById('operation-levels-container');
     if (levelsContainer) {
-      ChartEngine.renderOperationLevelLines(levelsContainer, machines, this.analysis.timeline_intervals);
+      ChartEngine.renderOperationLevelLines(levelsContainer, machines, intervals as any);
     }
   }
 

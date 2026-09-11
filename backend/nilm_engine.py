@@ -42,12 +42,15 @@ class NILMEngine:
 
     def detect_events(self, df: pd.DataFrame, 
                       current_threshold: float = 2.0, 
-                      power_threshold: float = 1.0) -> pd.DataFrame:
+                      power_threshold: float = 1.0) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Detects electrical switching events (turn-on and turn-off transients)
         using multi-parameter step changes.
         Each detected transition is labelled in the 'event_type' column:
         'ON' for positive transitions (turn-on) and 'OFF' for negative ones.
+        Returns (df_work, events): the working frame with computed signals
+        (P_total, delta_P, delta_I, ...) and the frame of detected events,
+        both with the original index preserved.
         """
         i_cols = [c for c in ['I *L1 media [A]', 'I *L2 media [A]', 'I *L3 media [A]'] if c in df.columns]
         v_cols = [c for c in ['U L1 media [V]', 'U L2 media [V]', 'U L3 media [V]'] if c in df.columns]
@@ -113,9 +116,27 @@ class NILMEngine:
         events['event_type'] = np.where(
             mask_on.reindex(events.index).fillna(False).values, 'ON', 'OFF'
         )
-        
+
         # Additional features
         events['hour_of_day'] = events['timestamp'].dt.hour + events['timestamp'].dt.minute / 60.0
+
+        # --- Fallback anti-Gantt-vacio: si el detector no encontro nada, se
+        # relaja el umbral de potencia a la mitad (los transitorios reales de
+        # esta medicion suelen quedar justo por debajo del umbral por defecto).
+        relaxed = False
+        if len(events) == 0 and power_threshold > 0.2:
+            relaxed_thr = max(0.2, power_threshold / 2.0)
+            mask_on = df_work['delta_P'] >= relaxed_thr
+            mask_off = df_work['delta_P'] <= -relaxed_thr
+            events = df_work[mask_on | mask_off].copy()
+            if len(events) > 0:
+                events['event_type'] = np.where(
+                    mask_on.reindex(events.index).fillna(False).values, 'ON', 'OFF'
+                )
+                events['hour_of_day'] = events['timestamp'].dt.hour + events['timestamp'].dt.minute / 60.0
+                relaxed = True
+        if relaxed or len(events) == 0:
+            print(f"Event detection (relaxed={relaxed}): {len(events)} events")
 
         # Harmonic transient signature: harmonic-current step (ΔIh, H3..H13)
         # relative to the fundamental-current step (ΔI1 ≈ ΔI total), in %.
@@ -125,6 +146,8 @@ class NILMEngine:
         events['harm_ratio_pct'] = (events['delta_H'].abs() / denom * 100.0).clip(upper=500.0)
         events['delta_thd'] = events['delta_THD']
 
+        # Return working frame with computed signals + event frame for callers
+        # (df_work has P_total/delta_P/delta_I/H_total; events has event rows).
         return df_work, events
 
     def cluster_appliances(self, events: pd.DataFrame, 
@@ -155,9 +178,16 @@ class NILMEngine:
         X_scaled = scaler.fit_transform(X)
 
         n_samples = len(events)
-        effective_k = min(n_clusters, max(1, n_samples // 2))
+        # Auto-reduce K cuando hay menos eventos que clusters pedidos
+        # (KMeans/GMM fallan si n_samples < n_clusters y el Gantt quedaba vacio).
+        # Minimo 1 cluster + fallback seguro con 1 solo evento (scaler necesita
+        # al menos 1 muestra; silhouette se omite con <3 muestras).
+        effective_k = max(1, min(n_clusters, n_samples))
+        single_event = (n_samples == 1)
 
-        if algorithm.lower() == 'gmm':
+        if single_event:
+            cluster_labels = np.zeros(n_samples, dtype=int)
+        elif algorithm.lower() == 'gmm':
             model = GaussianMixture(n_components=effective_k, random_state=42, max_iter=200)
             cluster_labels = model.fit_predict(X_scaled)
         elif algorithm.lower() == 'dbscan':
@@ -167,8 +197,13 @@ class NILMEngine:
             label_map = {l: i for i, l in enumerate(unique_labels)}
             cluster_labels = np.array([label_map[l] for l in cluster_labels])
         else: # Default KMeans
-            model = KMeans(n_clusters=effective_k, random_state=42, n_init=10)
-            cluster_labels = model.fit_predict(X_scaled)
+            if effective_k >= n_samples:
+                # Tantos clusters como eventos: asignacion 1:1 sin KMeans
+                # (KMeans con k==n_samples da clusters triviales de 1 punto).
+                cluster_labels = np.arange(n_samples, dtype=int)
+            else:
+                model = KMeans(n_clusters=effective_k, random_state=42, n_init=10)
+                cluster_labels = model.fit_predict(X_scaled)
 
         events['cluster'] = cluster_labels
 
@@ -262,19 +297,32 @@ class NILMEngine:
         for c in clusters:
             info = cluster_info[c]
             c_events = events[events['cluster'] == c].sort_values('timestamp')
-            
-            # Separate turn-ON and turn-OFF transitions
+
+            # OFFs SÍ están clusterizados (el clustering usa magnitudes absolutas,
+            # agrupando ON/OFF del mismo equipo), pero NO usamos el OFF por-cluster:
+            # emparejamos contra el pool GLOBAL de eventos OFF por orden temporal
+            # y magnitud (~nominal_p), lo que aguanta solapamientos de equipos.
             c_events_on = c_events[c_events['event_type'] == 'ON'].reset_index(drop=True)
-            c_events_off = c_events[c_events['event_type'] == 'OFF'].reset_index(drop=True)
             nominal_p = max(0.5, info['avg_delta_p'])
-            
+
+            off_pool = events[events['event_type'] == 'OFF'].copy()
+            off_pool = off_pool.sort_values('timestamp').reset_index(drop=True)
             used_off_indices = set()
             
             # Edge case: Machine already running at t=0 before first ON event
-            if len(c_events_off) > 0:
-                first_off_time = pd.Timestamp(c_events_off['timestamp'].iloc[0])
+            # (uses the global OFF pool: first OFF of compatible magnitude).
+            if len(off_pool) > 0:
                 first_on_time = pd.Timestamp(c_events_on['timestamp'].iloc[0]) if len(c_events_on) > 0 else None
-                if first_on_time is None or first_off_time < first_on_time:
+                cand = None
+                for _oi, _orow in off_pool.iterrows():
+                    _ot = pd.Timestamp(_orow['timestamp'])
+                    if first_on_time is not None and _ot >= first_on_time:
+                        break
+                    if abs(float(_orow.get('delta_P', -nominal_p))) >= 0.5 * nominal_p:
+                        cand = (_oi, _ot)
+                        break
+                if cand is not None:
+                    _oi, first_off_time = cand
                     if p_total[0] > base_power + 0.3 * nominal_p:
                         off_idx = min(n_points, np.searchsorted(timestamps, np.datetime64(first_off_time.to_datetime64(), 'ns')))
                         if off_idx > 0:
@@ -290,46 +338,57 @@ class NILMEngine:
                                     "category": info['category'],
                                     "color": info['color'],
                                     "start_time": start_dt.strftime('%H:%M:%S'),
+                                    "end_time": end_dt.strftime('%H:%M:%S'),
                                     "start_timestamp": str(start_dt),
                                     "end_timestamp": str(end_dt),
                                     "duration_minutes": round(dur_minutes, 1),
                                     "avg_power_kw": round(nominal_p, 2),
                                     "energy_kwh": round(energy_kwh, 3)
                                 })
-                            used_off_indices.add(0)
+                            used_off_indices.add(_oi)
 
             # Pair each ON event with its corresponding OFF transition
-            for on_i, ev_on in c_events_on.iterrows():
+            # NOTE: c_events_on was reset_index(drop=True) -> on_i is 0..N-1
+            # positional, so use pos (enumerate) for next-ON ceiling.
+            for pos, (on_i, ev_on) in enumerate(c_events_on.iterrows()):
                 ev_on_time = np.datetime64(pd.Timestamp(ev_on['timestamp']).to_datetime64(), 'ns')
                 idx_on = np.searchsorted(timestamps, ev_on_time)
                 if idx_on >= n_points:
                     continue
-                
+
                 # If this ON event falls inside an already active window for this machine, skip duplicate
                 if disagg_power[c][idx_on] > 0:
                     continue
 
                 # Determine ceiling: the next ON event for the same machine
-                if on_i + 1 < len(c_events_on):
-                    next_on_time = np.datetime64(pd.Timestamp(c_events_on['timestamp'].iloc[on_i + 1]).to_datetime64(), 'ns')
+                if pos + 1 < len(c_events_on):
+                    next_on_time = np.datetime64(pd.Timestamp(c_events_on['timestamp'].iloc[pos + 1]).to_datetime64(), 'ns')
                     idx_next_on = min(n_points, np.searchsorted(timestamps, next_on_time))
                 else:
                     idx_next_on = n_points
 
-                # Look for a candidate OFF event between idx_on and idx_next_on
+                # Look for a candidate OFF event between idx_on and idx_next_on.
+                # OFFs viven en el pool GLOBAL (todos los eventos OFF de la serie):
+                # tomamos el primer OFF sin usar en-window cuya magnitud ~= nominal_p,
+                # para que una máquina pequeña no robe el OFF de una grande.
                 matched_off_idx = None
                 best_off_row_idx = None
-                
-                for off_i, ev_off in c_events_off.iterrows():
+
+                for off_i, ev_off in off_pool.iterrows():
                     if off_i in used_off_indices:
                         continue
                     ev_off_time = np.datetime64(pd.Timestamp(ev_off['timestamp']).to_datetime64(), 'ns')
-                    idx_off = np.searchsorted(timestamps, ev_off_time)
-                    if idx_on < idx_off <= idx_next_on:
+                    idx_off = int(np.searchsorted(timestamps, ev_off_time))
+                    if not (idx_on < idx_off <= idx_next_on):
+                        if idx_off > idx_next_on:
+                            break
+                        continue
+                    mag = abs(float(ev_off.get('delta_P', -nominal_p)))
+                    if 0.5 * nominal_p <= mag <= 2.5 * nominal_p:
                         matched_off_idx = idx_off
                         best_off_row_idx = off_i
                         break
-                
+
                 if matched_off_idx is not None:
                     end_idx = matched_off_idx
                     used_off_indices.add(best_off_row_idx)
@@ -360,6 +419,7 @@ class NILMEngine:
                         "category": info['category'],
                         "color": info['color'],
                         "start_time": start_dt.strftime('%H:%M:%S'),
+                        "end_time": end_dt.strftime('%H:%M:%S'),
                         "start_timestamp": str(start_dt),
                         "end_timestamp": str(end_dt),
                         "duration_minutes": round(dur_minutes, 1),
@@ -560,6 +620,7 @@ class NILMEngine:
                     "category": info['category'],
                     "color": info['color'],
                     "start_time": start_dt.strftime('%H:%M:%S'),
+                    "end_time": end_dt.strftime('%H:%M:%S'),
                     "start_timestamp": str(start_dt),
                     "end_timestamp": str(end_dt),
                     "duration_minutes": round(dur_minutes, 1),
@@ -657,6 +718,15 @@ class NILMEngine:
         events_clustered, cluster_info = self.cluster_appliances(
             events, n_clusters=n_clusters, algorithm=algorithm, custom_labels=labels
         )
+        requested_k = int(n_clusters)
+        n_clusters = len(cluster_info)
+        n_on_total = int((events['event_type'] == 'ON').sum()) if len(events) else 0
+        if n_on_total == 0:
+            warning = "Sin arranques detectados con el umbral actual: baja el umbral de corriente y re-ejecuta el analisis."
+        elif n_clusters < requested_k:
+            warning = f"Solo {n_on_total} arranques detectados: equipos reducidos a {n_clusters} (pedidos {requested_k})."
+        else:
+            warning = ""
         
         if use_fhmm and len(events_clustered) > 0:
             machine_states = self.estimate_machine_states(df_work, cluster_info, events_clustered, max_states)
@@ -723,6 +793,7 @@ class NILMEngine:
             "nilmtk_power_states_kw": [round(state, 2) for state in nilmtk_states],
             "n_clusters": n_clusters,
             "total_events_detected": len(events_clustered),
+            "warning": warning,
             "timestamps": timestamps_sampled,
             "p_total": p_total_sampled,
             "baseline": baseline_sampled,

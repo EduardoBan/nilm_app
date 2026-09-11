@@ -106,6 +106,7 @@ export interface TimelineInterval {
   /* Opción A: estado FHMM del intervalo */
   state_level?: number;
   state_name?: string;
+  state?: string;
 }
 
 export interface DisaggregatedSeries {
@@ -140,6 +141,7 @@ export interface NILMAnalysisResult {
   algorithm: string;
   n_clusters: number;
   total_events_detected: number;
+  warning?: string;
   timestamps: string[];
   p_total: number[];
   baseline: number[];
