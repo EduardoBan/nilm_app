@@ -139,6 +139,7 @@ export interface HourlyActivity {
 export interface NILMAnalysisResult {
   dataset_id: string;
   algorithm: string;
+  total_energy_kwh?: number;
   n_clusters: number;
   total_events_detected: number;
   warning?: string;

@@ -786,9 +786,12 @@ class NILMEngine:
                 "color": r['color']
             })
 
+        total_energy_kwh = round(float(df_work['P_total'].sum() * (10.0 / 3600.0)), 2)
+
         return {
             "dataset_id": dataset_id,
             "algorithm": algorithm,
+            "total_energy_kwh": total_energy_kwh,
             "nilmtk_available": self.nilmtk_available,
             "nilmtk_power_states_kw": [round(state, 2) for state in nilmtk_states],
             "n_clusters": n_clusters,

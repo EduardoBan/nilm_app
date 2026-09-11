@@ -540,12 +540,31 @@ class NILMApp {
     // 2. Donut Energy Share
     const canvasDonut = document.getElementById('chart-energy-donut') as HTMLCanvasElement;
     if (canvasDonut) {
-      const slices = this.analysis.machine_statistics.map(m => ({
+      const machineSlices = this.analysis.machine_statistics.map(m => ({
         name: m.name,
         value: m.energy_kwh,
         color: m.color
       }));
-      ChartEngine.renderDonut(canvasDonut, slices);
+      const machineEnergy = machineSlices.reduce((a, s) => a + s.value, 0);
+
+      // Energia total de la red (campo del backend) o derivada de los shares
+      let totalEnergy = (this.analysis as any).total_energy_kwh as number | undefined;
+      if (!totalEnergy || totalEnergy < machineEnergy) {
+        const ests = this.analysis.machine_statistics
+          .filter(m => m.energy_share_pct > 0)
+          .map(m => m.energy_kwh * 100 / m.energy_share_pct);
+        totalEnergy = ests.length ? ests.reduce((a, b) => a + b, 0) / ests.length : machineEnergy;
+      }
+
+      // Sector de carga base (Standby) = consumo no atribuido a ninguna maquina
+      const baseline = Math.max(0, totalEnergy - machineEnergy);
+      const slices = [...machineSlices];
+      if (baseline > totalEnergy * 0.005) {
+        slices.push({ name: 'Carga base (Standby)', value: baseline, color: '#64748B' });
+      }
+
+      const res = ChartEngine.renderDonut(canvasDonut, slices);
+      this.chartCleanups.push(res.destroy);
     }
   }
 
