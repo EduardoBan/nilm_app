@@ -1,0 +1,7 @@
+config user: NILM App <nilm@local>
+staged: 12
+COMMIT: aa9e53d697861ca5bf8c55bdcd5967a9417a6069
+after staged:    0
+after unstaged:  0
+after untracked: 1
+HEAD: aa9e53d697861ca5bf8c55bdcd5967a9417a6069
