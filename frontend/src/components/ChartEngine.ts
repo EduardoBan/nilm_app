@@ -1087,11 +1087,11 @@ export class ChartEngine {
   static renderDonut(
     canvas: HTMLCanvasElement,
     slices: Array<{ name: string; value: number; color: string }>
-  ) {
+  ): { destroy: () => void } {
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!ctx) return { destroy: () => {} };
 
-    const size = resolveSize(canvas, 400, 360);
+    const size = resolveSize(canvas, 720, 480);
     const dpr = window.devicePixelRatio || 1;
     canvas.width = size.w * dpr;
     canvas.height = size.h * dpr;
@@ -1099,33 +1099,229 @@ export class ChartEngine {
 
     const width = size.w;
     const height = size.h;
-    const cx = width / 2;
-    const cy = height / 2;
-    const radius = Math.min(cx, cy) * 0.85;
-    const innerRadius = radius * 0.6;
+    const bgSep = chartColor('--chart-bg', '#121212');
 
-    const total = slices.reduce((acc, s) => acc + s.value, 0) || 1;
+    // Datos ordenados por consumo descendente (solo valores > 0)
+    const data = slices
+      .filter(s => s.value > 0)
+      .map(s => ({ ...s, pct: 0 }))
+      .sort((a, b) => b.value - a.value);
+    const total = data.reduce((acc, s) => acc + s.value, 0);
+    data.forEach(s => { s.pct = total > 0 ? (s.value / total) * 100 : 0; });
 
-    let startAngle = -Math.PI / 2;
-    slices.forEach(s => {
-      const sliceAngle = (s.value / total) * Math.PI * 2;
+    // Layout: donut a la izquierda + leyenda a la derecha (o debajo si es estrecho)
+    // leyenda SIEMPRE visible: si el canvas es muy estrecho, se dibuja debajo
+    const minLegendW = 200;
+    const legendW = width >= 520 ? Math.min(260, width * 0.42) : 0;
+    const legendOnRight = legendW >= minLegendW;
+    const padL = 20;
+    const padR = 16;
+    const donutAreaW = legendOnRight ? width - legendW - padL - padR : width - padL - padR;
+    const legendX = legendOnRight ? (padL + donutAreaW + padR) : padL;
+    const legendRowH = 32;
+    const legendBlockH = data.length * legendRowH + 16;
+    const legendY = legendOnRight
+      ? Math.max(padL, (height - legendBlockH) / 2)
+      : height - legendBlockH;
+
+    const cx = legendOnRight ? padL + donutAreaW / 2 : width / 2;
+    const cy = legendOnRight ? height / 2 : Math.max(80, (height - legendBlockH) * 0.45);
+    const radius = Math.max(50, Math.min(donutAreaW, legendOnRight ? height : height - legendBlockH - 10) * 0.34);
+    const innerRadius = radius * 0.60;
+
+    let hoverIndex = -1;
+    const cursor = { x: 0, y: 0 };
+
+    // Angulos de cada sector (desde las 12 en punto)
+    const angles: Array<{ start: number; end: number }> = [];
+    {
+      let a = -Math.PI / 2;
+      data.forEach(s => {
+        const span = total > 0 ? (s.value / total) * Math.PI * 2 : 0;
+        angles.push({ start: a, end: a + span });
+        a += span;
+      });
+    }
+
+    function slicePath(idx: number, explode: number) {
+      const s = angles[idx];
+      const mid = (s.start + s.end) / 2;
+      const ox = Math.cos(mid) * explode;
+      const oy = Math.sin(mid) * explode;
       ctx.beginPath();
-      ctx.arc(cx, cy, radius, startAngle, startAngle + sliceAngle);
-      ctx.arc(cx, cy, innerRadius, startAngle + sliceAngle, startAngle, true);
+      ctx.arc(cx + ox, cy + oy, radius, s.start, s.end);
+      ctx.arc(cx + ox, cy + oy, innerRadius, s.end, s.start, true);
       ctx.closePath();
-      ctx.fillStyle = s.color;
-      ctx.fill();
-      ctx.strokeStyle = '#121212';
-      ctx.lineWidth = 2;
-      ctx.stroke();
+    }
 
-      startAngle += sliceAngle;
-    });
+    function hitTest(mx: number, my: number): number {
+      const dist = Math.hypot(mx - cx, my - cy);
+      if (dist < innerRadius - 2 || dist > radius + 10) return -1;
+      let ang = Math.atan2(my - cy, mx - cx);
+      if (ang < -Math.PI / 2) ang += Math.PI * 2;
+      for (let i = 0; i < angles.length; i++) {
+        if (ang >= angles[i].start - 1e-9 && ang <= angles[i].end + 1e-9) return i;
+      }
+      return -1;
+    }
 
-    // Center text
-    ctx.fillStyle = chartColor('--chart-text', '#FFFFFF');
-    ctx.font = 'bold 15px Inter, system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(`${total.toFixed(0)} kWh`, cx, cy + 5);
+    function drawRoundRect(x: number, y: number, w: number, h: number, r: number) {
+      // Manual: compatible con navegadores sin ctx.roundRect
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.arcTo(x + w, y, x + w, y + r, r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+      ctx.lineTo(x + r, y + h);
+      ctx.arcTo(x, y + h, x, y + h - r, r);
+      ctx.lineTo(x, y + r);
+      ctx.arcTo(x, y, x + r, y, r);
+      ctx.closePath();
+    }
+
+    function truncate(text: string, maxW: number): string {
+      if (ctx.measureText(text).width <= maxW) return text;
+      let t = text;
+      while (t.length > 1 && ctx.measureText(t + '…').width > maxW) {
+        t = t.slice(0, -1);
+      }
+      return t + '…';
+    }
+
+    function draw() {
+      if (!ctx) return;
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = chartColor('--chart-bg', '#121212');
+      ctx.fillRect(0, 0, width, height);
+
+      if (data.length === 0) {
+        ctx.fillStyle = chartColor('--chart-text', '#94A3B8');
+        ctx.font = '12px Inter, system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Sin datos de energía para esta medición', width / 2, height / 2);
+        return;
+      }
+
+      // Sectores (el sector bajo el cursor se resalta desplazado)
+      data.forEach((_s, i) => {
+        slicePath(i, i === hoverIndex ? 8 : 0);
+        ctx.fillStyle = data[i].color;
+        ctx.fill();
+        ctx.strokeStyle = bgSep;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      });
+
+      // Porcentajes sobre los sectores (solo si el sector >= 4%)
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = 'bold 11px Inter, system-ui, sans-serif';
+      data.forEach((s, i) => {
+        if (s.pct < 4) return;
+        const mid = (angles[i].start + angles[i].end) / 2;
+        const r = (radius + innerRadius) / 2;
+        const x = cx + Math.cos(mid) * r;
+        const y = cy + Math.sin(mid) * r;
+        const label = `${s.pct.toFixed(0)}%`;
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+        ctx.strokeText(label, x, y);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillText(label, x, y);
+      });
+      ctx.textBaseline = 'alphabetic';
+
+      // Centro: referencia del total
+      ctx.textAlign = 'center';
+      ctx.fillStyle = chartColor('--chart-text', '#94A3B8');
+      ctx.font = '11px Inter, system-ui, sans-serif';
+      ctx.fillText('Consumo total', cx, cy - 16);
+      ctx.fillStyle = chartColor('--chart-text', '#FFFFFF');
+      ctx.font = 'bold 20px Inter, system-ui, sans-serif';
+      ctx.fillText(`${total.toFixed(1)} kWh`, cx, cy + 10);
+
+      // Leyenda: color + nombre + kWh + %
+      ctx.font = '10.5px Inter, system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      const rowH = legendRowH;
+      const maxLabelW = legendW - 78;
+      const valueX = legendX + legendW - 10;
+      data.forEach((s, i) => {
+        const y = legendY + i * rowH;
+        const hovered = i === hoverIndex;
+
+        // swatch de color
+        ctx.fillStyle = s.color;
+        drawRoundRect(legendX, y + 2, 12, 12, 3);
+        ctx.fill();
+
+        // nombre (truncado para que no tape al valor)
+        ctx.fillStyle = hovered ? chartColor('--chart-text', '#FFFFFF') : chartColor('--chart-text', '#CBD5E1');
+        ctx.font = hovered ? 'bold 10.5px Inter, system-ui, sans-serif' : '10.5px Inter, system-ui, sans-serif';
+        const labelText = maxLabelW > 30 ? truncate(s.name, maxLabelW) : s.name.substring(0, 14);
+        ctx.fillText(labelText, legendX + 18, y + 12);
+
+        // kWh y % alineados a la derecha
+        ctx.fillStyle = chartColor('--chart-text', '#94A3B8');
+        ctx.font = '10px Inter, system-ui, sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(`${s.value.toFixed(1)} kWh · ${s.pct.toFixed(1)}%`, valueX, y + 12);
+        ctx.textAlign = 'left';
+      });
+
+      // Tooltip del sector bajo el cursor
+      if (hoverIndex >= 0) {
+        const s = data[hoverIndex];
+        const tipW = 230;
+        const tipH = 66;
+        const tx = Math.min(width - tipW - 8, Math.max(8, cursor.x + 14));
+        const ty = Math.min(height - tipH - 8, Math.max(8, cursor.y - tipH - 10));
+
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
+        ctx.strokeStyle = s.color;
+        ctx.lineWidth = 1.5;
+        drawRoundRect(tx, ty, tipW, tipH, 8);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 11px Inter, system-ui, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(truncate(s.name, tipW - 24), tx + 12, ty + 18);
+        ctx.fillStyle = '#CBD5E1';
+        ctx.font = '10px Inter, system-ui, sans-serif';
+        ctx.fillText(`${s.value.toFixed(2)} kWh`, tx + 12, ty + 36);
+        ctx.fillText(`${s.pct.toFixed(1)}% del consumo total`, tx + 12, ty + 52);
+      }
+    }
+
+    const onMove = (e: MouseEvent) => {
+      const b = canvas.getBoundingClientRect();
+      cursor.x = (e.clientX - b.left) * (width / (b.width || width));
+      cursor.y = (e.clientY - b.top) * (height / (b.height || height));
+      const idx = hitTest(cursor.x, cursor.y);
+      if (idx !== hoverIndex || idx >= 0) {
+        hoverIndex = idx;
+        draw();
+      }
+    };
+
+    const onLeave = () => {
+      hoverIndex = -1;
+      draw();
+    };
+
+    canvas.addEventListener('mousemove', onMove);
+    canvas.addEventListener('mouseleave', onLeave);
+
+    draw();
+
+    return {
+      destroy: () => {
+        canvas.removeEventListener('mousemove', onMove);
+        canvas.removeEventListener('mouseleave', onLeave);
+      }
+    };
   }
 }
