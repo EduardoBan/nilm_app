@@ -653,16 +653,44 @@ export class ChartEngine {
     const plotW = width - padLeft - padRight;
     const plotH = height - padTop - padBottom;
 
-    let maxX = 5;
-    let maxY = 5;
+    // Calcular rangos incluyendo negativos si existen
+    let minX = 0, maxX = 5;
+    let minY = 0, maxY = 5;
     events.forEach(e => {
+      if (e.x < minX) minX = e.x;
       if (e.x > maxX) maxX = e.x;
+      if (e.y < minY) minY = e.y;
       if (e.y > maxY) maxY = e.y;
     });
-    maxX = maxX * 1.15;
-    maxY = maxY * 1.15;
+    // Margen 15% y asegurar que 0 esté visible si hay signos mixtos
+    const rangeX = maxX - minX;
+    const rangeY = maxY - minY;
+    minX = minX - rangeX * 0.08;
+    maxX = maxX + rangeX * 0.08;
+    minY = minY - rangeY * 0.08;
+    maxY = maxY + rangeY * 0.08;
 
     let hoveredEvent: any = null;
+
+    // Mapeo lineal generalizado (soporta negativos)
+    function mapX(v: number): number {
+      return padLeft + ((v - minX) / (maxX - minX)) * plotW;
+    }
+    function mapY(v: number): number {
+      return padTop + plotH - ((v - minY) / (maxY - minY)) * plotH;
+    }
+
+    function niceStep(range: number, ticks: number): number {
+      const raw = range / ticks;
+      const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+      const norm = raw / mag;
+      let step;
+      if (norm <= 1.5) step = 1;
+      else if (norm <= 3) step = 2;
+      else if (norm <= 7) step = 5;
+      else step = 10;
+      return step * mag;
+    }
 
     function draw() {
       if (!ctx) return;
@@ -672,35 +700,72 @@ export class ChartEngine {
       ctx.fillStyle = chartColor('--chart-bg', '#121212');
       ctx.fillRect(0, 0, width, height);
 
-      // Grid
+      // --- Fondo del area de dibujo (encima del bg, debajo de puntos/grid) ---
+      ctx.fillStyle = 'rgba(255,255,255,0.018)';
+      ctx.fillRect(padLeft, padTop, plotW, plotH);
+
+      // Grid y ticks
       ctx.strokeStyle = '#717171';
       ctx.lineWidth = 1;
       ctx.fillStyle = chartColor('--chart-text', '#A0A0A0');
       ctx.font = '11px Inter, system-ui, sans-serif';
 
-      // Y Ticks
+      // Y Ticks (5 divisiones)
+      const stepY = niceStep(maxY - minY, 5);
       ctx.textAlign = 'right';
-      for (let i = 0; i <= 5; i++) {
-        const val = (maxY / 5) * (5 - i);
-        const y = padTop + (plotH / 5) * i;
+      const startY = Math.ceil(minY / stepY) * stepY;
+      for (let v = startY; v <= maxY + 1e-9; v += stepY) {
+        if (v < minY) continue;
+        const y = mapY(v);
+        if (y < padTop - 0.5 || y > padTop + plotH + 0.5) continue;
         ctx.beginPath();
         ctx.moveTo(padLeft, y);
         ctx.lineTo(padLeft + plotW, y);
         ctx.stroke();
-        ctx.fillText(val.toFixed(1), padLeft - 8, y + 4);
+        ctx.fillText(v.toFixed(2), padLeft - 8, y + 4);
       }
 
-      // X Ticks
+      // X Ticks (5 divisiones)
+      const stepX = niceStep(maxX - minX, 5);
       ctx.textAlign = 'center';
-      for (let i = 0; i <= 5; i++) {
-        const val = (maxX / 5) * i;
-        const x = padLeft + (plotW / 5) * i;
+      const startX = Math.ceil(minX / stepX) * stepX;
+      for (let v = startX; v <= maxX + 1e-9; v += stepX) {
+        if (v < minX) continue;
+        const x = mapX(v);
+        if (x < padLeft - 0.5 || x > padLeft + plotW + 0.5) continue;
         ctx.beginPath();
         ctx.moveTo(x, padTop);
         ctx.lineTo(x, padTop + plotH);
         ctx.stroke();
-        ctx.fillText(val.toFixed(1), x, height - padBottom + 18);
+        ctx.fillText(v.toFixed(2), x, height - padBottom + 18);
       }
+
+      // Ejes de referencia en 0 (si está dentro del rango)
+      if (minX < 0 && maxX > 0) {
+        const x0 = mapX(0);
+        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x0, padTop);
+        ctx.lineTo(x0, padTop + plotH);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      }
+      if (minY < 0 && maxY > 0) {
+        const y0 = mapY(0);
+        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(padLeft, y0);
+        ctx.lineTo(padLeft + plotW, y0);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      }
+
+      // Bordes del grafico
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(padLeft + 0.5, padTop + 0.5, plotW, plotH);
 
       // Axis Labels
       ctx.fillStyle = chartColor('--chart-text', '#CBD5E1');
@@ -714,10 +779,19 @@ export class ChartEngine {
       ctx.fillText(yLabel, 0, 0);
       ctx.restore();
 
+      // --- CLIP al area del grafico: los puntos no invaden ejes/labels ---
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(padLeft, padTop, plotW, plotH);
+      ctx.clip();
+
       // Render points
       events.forEach(e => {
-        const px = padLeft + (e.x / maxX) * plotW;
-        const py = padTop + plotH - (e.y / maxY) * plotH;
+        const px = mapX(e.x);
+        const py = mapY(e.y);
+        // solo dibuja si está dentro (con pequeño margen para el stroke)
+        if (px < padLeft - 8 || px > padLeft + plotW + 8) return;
+        if (py < padTop - 8 || py > padTop + plotH + 8) return;
 
         ctx.beginPath();
         ctx.arc(px, py, 4.5, 0, Math.PI * 2);
@@ -727,6 +801,8 @@ export class ChartEngine {
         ctx.lineWidth = 0.7;
         ctx.stroke();
       });
+
+      ctx.restore(); // fin clip
 
       // Hover tooltip
       if (hoveredEvent) {
