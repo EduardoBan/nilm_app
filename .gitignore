@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+
+# NILM Data Cache
+cache/
+*.pkl
+*.feather
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Datos crudos de medida (Excel de ~25 MB): no se versionan en Git porque
+# son binarios grandes; quedan cubiertos por los respaldos ZIP de backups/.
+Data/
+
+# Respaldos automaticos generados por scripts/backup.py
+backups/
+*.zip
+
+# Salidas generadas
+reports/
+.pytest_cache/
+node_modules/
+
