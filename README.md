@@ -79,7 +79,8 @@ Cuando NILMTK está disponible, el análisis devuelve los estados de potencia ag
 9. **Validación de la Desagregación (PASO 3)**:
    - Error de reconstrucción global: **MAE / RMSE / MAPE** entre la potencia medida y `baseline + Σ equipos`, más el porcentaje de energía explicada por la desagregación.
    - **MAE del salto ON** por equipo: consistencia entre el ΔP del evento de arranque y el salto real en la curva desagregada.
-   - **Matriz de confusión ON/OFF** (global y por equipo) contra la referencia de eventos pareados, con **precision / recall / F1** y gráfico de barras del F1 por equipo.
+   - **Matriz de confusión ON/OFF** (global y por equipo) contra la referencia de eventos pareados, con **precision / recall / F1 / accuracy** y gráfico de barras del F1 por equipo.
+   - **Métricas de regresión (energía)** por equipo y global: **MAE/RMSE** de potencia (kW), **RE** (error relativo en la energía total acumulada, %) y **NEP** (error de potencia normalizado por la energía real).
 
 ## 🤖 Algoritmos de Inteligencia Artificial Disponibles
 
@@ -124,7 +125,8 @@ El resultado se muestra como badge en la tabla (columna *Tipo de Carga*) y en la
 ### 4. Validación de la Desagregación (PASO 3)
 Pestaña **✅ Validación**: cada análisis calcula la clave `validation` con la calidad de la desagregación automática:
 
-- **Error de reconstrucción** (`reconstruction`): MAE/RMSE/MAPE entre la potencia medida y `baseline + Σ equipos`, y porcentaje de energía explicada. Cuantifica cuánto de la señal real captura el modelo NILM.
+- **Error de reconstrucción** (`reconstruction`): MAE/RMSE/MAPE entre la potencia medida y `baseline + Σ equipos`, porcentaje de energía explicada, **RE** (error relativo de la energía total acumulada) y **NEP** (error de potencia normalizado). Cuantifica cuánto de la señal real captura el modelo NILM.
 - **Consistencia de saltos** (`machines[].jump_mae_kw`): en cada arranque ON se compara el ΔP esperado del evento contra el salto real de la curva desagregada del equipo.
-- **Detección ON/OFF** (`confusion_global`, `machines[].confusion`): referencia = pareo de eventos (ON tras un arranque, OFF tras una parada); predicción = curva desagregada por encima del umbral (10 % del nominal). Se reportan TP/FP/FN/TN con precision/recall/F1.
-- La pestaña muestra tarjetas de métricas, fichas por equipo con su matriz de confusión y un gráfico de barras del **F1 por equipo** (1.0 = desagregación perfecta).
+- **Detección ON/OFF** (`confusion_global`, `machines[].confusion`): referencia = pareo de eventos (ON tras un arranque, OFF tras una parada); predicción = curva desagregada por encima del umbral (10 % del nominal). Se reportan TP/FP/FN/TN con **precision/recall/F1/accuracy**.
+- **Regresión por equipo** (`machines[].reg_mae_kw`, `reg_rmse_kw`, `re_pct`, `nep`): MAE/RMSE en kW contra la señal de referencia por eventos (nominal mientras activo, 0 kW si no); RE compara la energía acumulada predicha vs referida; NEP normaliza el error absoluto por la energía de referencia (comparable entre equipos de distinto tamaño).
+- La pestaña muestra tarjetas de métricas (MAE/RMSE/MAPE/RE/NEP + F1/accuracy), fichas por equipo con su matriz de confusión y un gráfico de barras del **F1 por equipo** (1.0 = desagregación perfecta).

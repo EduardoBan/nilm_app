@@ -920,11 +920,18 @@ class NILMEngine:
         total_energy_meas = float(p_total.sum())
         energy_rec = float(np.maximum(reconstructed, 0.0).sum())
         explained = energy_rec / total_energy_meas * 100.0 if total_energy_meas > 0 else 0.0
+        # RE (Relative Error in Total Energy): error del acumulado final, sin
+        # importar el "cuando". NEP (Normalized Error in Power): error absoluto
+        # normalizado por la energia real total (comparable entre aparatos).
+        re_pct = abs(total_energy_meas - energy_rec) / total_energy_meas * 100.0 if total_energy_meas > 0 else 0.0
+        nep = float(np.sum(np.abs(err)) / total_energy_meas) if total_energy_meas > 0 else 0.0
         return {
             "mae_kw": round(mae, 3),
             "rmse_kw": round(rmse, 3),
             "mape_pct": round(mape, 1),
             "energy_explained_pct": round(explained, 1),
+            "re_pct": round(re_pct, 1),
+            "nep": round(nep, 3),
         }
 
     @staticmethod
@@ -987,6 +994,20 @@ class NILMEngine:
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
         recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
         f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+        accuracy = (tp + tn) / max(1, tp + fp + fn + tn)
+
+        # Metricas de regresion (energia) contra la referencia por eventos:
+        # la senal de referencia vale el nivel nominal del equipo mientras esta
+        # activo y 0 kW cuando no. MAE/RMSE en kW; RE = error relativo de la
+        # energia total acumulada; NEP = error de potencia normalizado.
+        ref_signal = np.where(active, nominal, 0.0)
+        reg_err = c_curve - ref_signal
+        reg_mae = float(np.mean(np.abs(reg_err)))
+        reg_rmse = float(np.sqrt(np.mean(reg_err ** 2)))
+        e_ref = float(ref_signal.sum())
+        e_pred = float(np.maximum(c_curve, 0.0).sum())
+        re_pct = abs(e_ref - e_pred) / e_ref * 100.0 if e_ref > 0 else 0.0
+        nep = float(np.sum(np.abs(reg_err)) / e_ref) if e_ref > 0 else 0.0
         return {
             "id": int(c),
             "name": info['name'],
@@ -997,6 +1018,11 @@ class NILMEngine:
             "precision": round(precision, 3),
             "recall": round(recall, 3),
             "f1": round(f1, 3),
+            "accuracy": round(accuracy, 3),
+            "reg_mae_kw": round(reg_mae, 3),
+            "reg_rmse_kw": round(reg_rmse, 3),
+            "re_pct": round(re_pct, 1),
+            "nep": round(nep, 3),
         }
 
     def _validate_disaggregation(self, df_work, events, cluster_info,
@@ -1016,10 +1042,12 @@ class NILMEngine:
         precision = cm["tp"] / (cm["tp"] + cm["fp"]) if (cm["tp"] + cm["fp"]) > 0 else 0.0
         recall = cm["tp"] / (cm["tp"] + cm["fn"]) if (cm["tp"] + cm["fn"]) > 0 else 0.0
         f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+        accuracy = (cm["tp"] + cm["tn"]) / max(1, sum(cm.values()))
         return {
             "reconstruction": self._validate_reconstruction_error(df_work, disagg_power, baseline_curve),
             "confusion_global": {**cm, "precision": round(precision, 3),
-                                 "recall": round(recall, 3), "f1": round(f1, 3)},
+                                 "recall": round(recall, 3), "f1": round(f1, 3),
+                                 "accuracy": round(accuracy, 3)},
             "machines": machines,
         }
 

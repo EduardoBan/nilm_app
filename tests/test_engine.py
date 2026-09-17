@@ -187,11 +187,14 @@ def test_validation_report_keys_and_consistency():
     assert val, "analyze_dataset debe devolver 'validation' con datos suficientes"
 
     rec = val["reconstruction"]
-    assert set(rec) >= {"mae_kw", "rmse_kw", "mape_pct", "energy_explained_pct"}
+    assert set(rec) >= {"mae_kw", "rmse_kw", "mape_pct", "energy_explained_pct",
+                        "re_pct", "nep"}
     assert rec["mae_kw"] >= 0.0 and rec["rmse_kw"] >= rec["mae_kw"] * 0.999
+    assert rec["re_pct"] >= 0.0 and rec["nep"] >= 0.0
 
     cg = val["confusion_global"]
-    assert set(cg) >= {"tp", "fp", "fn", "tn", "precision", "recall", "f1"}
+    assert set(cg) >= {"tp", "fp", "fn", "tn", "precision", "recall", "f1",
+                       "accuracy"}
     # La matriz global es la suma de las matrices por equipo.
     tp = sum(m["confusion"]["tp"] for m in val["machines"])
     fp = sum(m["confusion"]["fp"] for m in val["machines"])
@@ -199,16 +202,20 @@ def test_validation_report_keys_and_consistency():
     tn = sum(m["confusion"]["tn"] for m in val["machines"])
     assert (tp, fp, fn, tn) == (cg["tp"], cg["fp"], cg["fn"], cg["tn"])
     assert 0.0 <= cg["precision"] <= 1.0 and 0.0 <= cg["recall"] <= 1.0
-    assert 0.0 <= cg["f1"] <= 1.0
+    assert 0.0 <= cg["f1"] <= 1.0 and 0.0 <= cg["accuracy"] <= 1.0
 
     assert len(val["machines"]) == res["n_clusters"]
     for m in val["machines"]:
         assert set(m) >= {
             "id", "name", "color", "n_on_events", "jump_mae_kw",
-            "confusion", "precision", "recall", "f1",
+            "confusion", "precision", "recall", "f1", "accuracy",
+            "reg_mae_kw", "reg_rmse_kw", "re_pct", "nep",
         }
         assert m["n_on_events"] >= 0
         assert m["jump_mae_kw"] >= 0.0
+        assert 0.0 <= m["accuracy"] <= 1.0
+        assert m["reg_mae_kw"] >= 0.0 and m["reg_rmse_kw"] >= m["reg_mae_kw"] * 0.999
+        assert m["re_pct"] >= 0.0 and m["nep"] >= 0.0
         assert set(m["confusion"]) == {"tp", "fp", "fn", "tn"}
 
 

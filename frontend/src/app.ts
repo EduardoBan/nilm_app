@@ -976,7 +976,10 @@ class NILMApp {
           <div class="val-card"><span>RMSE</span><strong>${r.rmse_kw.toFixed(3)} kW</strong></div>
           <div class="val-card"><span>MAPE</span><strong>${r.mape_pct.toFixed(1)} %</strong></div>
           <div class="val-card"><span>Energía explicada</span><strong>${r.energy_explained_pct.toFixed(1)} %</strong></div>
+          <div class="val-card"><span>RE (error energía total)</span><strong>${(r.re_pct ?? 0).toFixed(1)} %</strong></div>
+          <div class="val-card"><span>NEP global</span><strong>${(r.nep ?? 0).toFixed(3)}</strong></div>
           <div class="val-card"><span>F1 global ON/OFF</span><strong>${cg.f1.toFixed(3)}</strong></div>
+          <div class="val-card"><span>Accuracy global</span><strong>${(cg.accuracy ?? 0).toFixed(3)}</strong></div>
           <div class="val-card"><span>Precision / Recall</span><strong>${cg.precision.toFixed(3)} / ${cg.recall.toFixed(3)}</strong></div>
           <div class="val-card"><span>Matriz global</span><strong>TP ${cg.tp} · FP ${cg.fp} · FN ${cg.fn} · TN ${cg.tn}</strong></div>`;
       }
@@ -996,7 +999,10 @@ class NILMApp {
             </div>
             <div class="machine-val-row"><span>Arranques ref.</span><strong>${m.n_on_events}</strong></div>
             <div class="machine-val-row"><span>MAE salto ON</span><strong>${m.jump_mae_kw.toFixed(3)} kW</strong></div>
-            <div class="machine-val-row"><span>P / R</span><strong>${m.precision.toFixed(3)} / ${m.recall.toFixed(3)}</strong></div>
+            <div class="machine-val-row"><span>P / R / Acc</span><strong>${m.precision.toFixed(3)} / ${m.recall.toFixed(3)} / ${(m.accuracy ?? 0).toFixed(3)}</strong></div>
+            <div class="machine-val-row"><span>MAE energía</span><strong>${(m.reg_mae_kw ?? 0).toFixed(3)} kW</strong></div>
+            <div class="machine-val-row"><span>RMSE energía</span><strong>${(m.reg_rmse_kw ?? 0).toFixed(3)} kW</strong></div>
+            <div class="machine-val-row"><span>RE / NEP</span><strong>${(m.re_pct ?? 0).toFixed(1)} % / ${(m.nep ?? 0).toFixed(3)}</strong></div>
             <table class="conf-table">
               <tr><th></th><th>Pred ON</th><th>Pred OFF</th></tr>
               <tr><th>Ref ON</th><td class="tp">${m.confusion.tp}</td><td class="fn">${m.confusion.fn}</td></tr>

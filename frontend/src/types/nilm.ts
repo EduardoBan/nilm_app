@@ -176,6 +176,9 @@ export interface ReconstructionError {
   rmse_kw: number;
   mape_pct: number;
   energy_explained_pct: number;
+  /* Métricas estándar NILMTK (regresión/energía) */
+  re_pct?: number;
+  nep?: number;
 }
 
 export interface ConfusionCounts {
@@ -189,6 +192,7 @@ export interface ConfusionGlobal extends ConfusionCounts {
   precision: number;
   recall: number;
   f1: number;
+  accuracy?: number;
 }
 
 export interface MachineValidation {
@@ -201,6 +205,12 @@ export interface MachineValidation {
   precision: number;
   recall: number;
   f1: number;
+  accuracy?: number;
+  /* Métricas de regresión (energía) estándar NILMTK */
+  reg_mae_kw?: number;
+  reg_rmse_kw?: number;
+  re_pct?: number;
+  nep?: number;
 }
 
 export interface ValidationReport {
