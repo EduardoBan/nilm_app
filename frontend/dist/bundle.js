@@ -2566,6 +2566,7 @@ class NILMApp {
         const dimsTxt = fx.dims.map((d, i) => `M${i}:${d}`).join(' × ');
         meta.innerHTML = `<div class="fhmm-meta-grid">
           <div><span>Método</span><strong>FHMM exacto · Viterbi (hmmlearn)</strong></div>
+          <div><span>Emisión</span><strong>${escapeHtml((fx.features ?? ['P']).join(' + '))}</strong></div>
           <div><span>Log-prob</span><strong>${fx.logprob !== null ? fx.logprob.toFixed(1) : '--'}</strong></div>
           <div><span>Estados combinados</span><strong>${fx.n_comb_states} (${escapeHtml(dimsTxt)})</strong></div>
           <div><span>Muestras decodificadas</span><strong>${fx.n_points_decoded} / ${fx.n_points_full} (paso ${fx.downsample_step})</strong></div>

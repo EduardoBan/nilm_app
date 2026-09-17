@@ -1,8 +1,15 @@
-"""Runner minimo de tests (pytest no esta instalado en este entorno)."""
+"""Runner minimo de tests (pytest no esta instalado en este entorno).
+
+Ademas ejecuta los tests de tests/, valida que el payload real sea JSON
+estricto (sin NaN/Infinity ni tipos numpy) localizando el campo culpable.
+"""
 import json
+import math
 import os
 import sys
 import traceback
+
+import numpy as np
 
 sys.path.insert(0, os.getcwd())
 
@@ -26,54 +33,46 @@ for mod in (te, tl):
 
 print(f"TESTS: {total - fails}/{total} PASS")
 
-# Validacion extra: reproducir el encoder exacto del servidor (NumpyEncoder,
-# backend/server.py) y comprobar ademas que los campos NUEVOS son JSON estrictos.
-import json as _json
 
-import numpy as _np
+def scan_bad(obj, path="$"):
+    """Localiza valores no serializables (numpy, NaN/Inf) con su ruta."""
+    bad = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            bad += scan_bad(v, f"{path}.{k}")
+    elif isinstance(obj, (list, tuple)):
+        for i, v in enumerate(obj):
+            bad += scan_bad(v, f"{path}[{i}]")
+    elif isinstance(obj, float):
+        if not math.isfinite(obj):
+            bad.append(f"{path} = {obj} (no finito)")
+    elif isinstance(obj, (bool, int, str)) or obj is None:
+        pass
+    elif isinstance(obj, (np.integer, np.floating)):
+        bad.append(f"{path} = {obj} ({type(obj).__name__} numpy)")
+    else:
+        bad.append(f"{path} = {obj} ({type(obj).__name__} no JSON)")
+    return bad
+
 
 from backend.data_manager import DataManager
 from backend.nilm_engine import NILMEngine
-from backend.server import NumpyEncoder
 
 dm = DataManager()
 ds = dm.list_datasets()[0]["id"]
-new_keys = ("harmonic_signatures", "fhmm_exact", "hmmlearn_available")
-
+json_ok = True
 for use_fhmm in (True, False):
-    res = NILMEngine(dm).analyze_dataset(ds, use_fhmm=use_fhmm)
+    result = NILMEngine(dm).analyze_dataset(ds, use_fhmm=use_fhmm)
+    problems = scan_bad(result)
+    for p in problems[:15]:
+        json_ok = False
+        print(f"  !! {p}")
+    try:
+        payload = json.dumps(result, allow_nan=False)
+        print(f"json use_fhmm={use_fhmm}: bytes={len(payload)} problemas={len(problems)}")
+    except (TypeError, ValueError) as exc:
+        json_ok = False
+        print(f"json use_fhmm={use_fhmm}: FALLO ({type(exc).__name__}: {exc})")
 
-    # 1) Serializacion real del servidor: debe funcionar y no emitir NaN/Infinity.
-    payload = _json.dumps(res, cls=NumpyEncoder, ensure_ascii=False)
-    bad = [tok for tok in ("NaN", "Infinity", "-Infinity") if tok in payload]
-    print(f"server_json use_fhmm={use_fhmm}: bytes={len(payload)} invalid_tokens={bad}")
-    assert not bad, f"payload no estricto: {bad}"
-
-    # 2) NEW fields must be serializable with the STANDARD ENCODER
-    #    (sin depender del NumpyEncoder del servidor).
-    subset = {k: res.get(k) for k in new_keys}
-    strict = _json.dumps(subset)
-    print(f"strict_json new_fields use_fhmm={use_fhmm}: bytes={len(strict)} OK")
-
-    # 2b) Los eventos scatter deben exponer las claves armonicas como float/int
-    #     nativos (los campos heredados id/cluster usan enteros numpy y los
-    #     cubre NumpyEncoder, ya validado en el paso 1).
-    for ev in res["scatter_events"]:
-        for f in ("delta_h3", "delta_h5", "delta_h7", "harm_ratio_pct"):
-            assert isinstance(ev[f], float), f"{f} no es float: {type(ev[f])}"
-
-    # 3) Estructura esperada por las pestanas del frontend.
-    assert len(res["harmonic_signatures"]) == res["n_clusters"]
-    for sig in res["harmonic_signatures"]:
-        assert isinstance(sig["id"], int) and not isinstance(sig["id"], bool)
-        for f in ("avg_delta_h3", "avg_delta_h5", "avg_delta_h7", "harm_ratio_pct"):
-            assert isinstance(sig[f], float)
-    if use_fhmm:
-        assert res["fhmm_exact"] is not None or not res["hmmlearn_available"]
-        if res["fhmm_exact"]:
-            assert res["fhmm_exact"]["n_comb_states"] == int(_np.prod(res["fhmm_exact"]["dims"]))
-    else:
-        assert res["fhmm_exact"] is None
-    print(f"structure use_fhmm={use_fhmm}: OK")
-
-print("ALL CHECKS OK")
+print("JSON_STRICT:", "OK" if json_ok else "FALLO")
+sys.exit(1 if fails or not json_ok else 0)

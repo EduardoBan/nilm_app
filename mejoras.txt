@@ -1,0 +1,147 @@
+=====================================================================
+MEJORAS PROPUESTAS PARA EL MOTOR NILM - ROADMAP DE ANALISIS
+Proyecto : nilm_app
+Creado   : 2026-09-17
+Estado base : PASO 1 (firma armonica transitoria), PASO 2 (FHMM exacto
+              Viterbi), PASO 3 (validacion MAE/RMSE + matriz confusion)
+=====================================================================
+
+Catalogo completo de mejoras identificadas, organizadas por categoria,
+con impacto y esfuerzo estimado. Las que aprovechan datos que ya se
+calculan pero no se usan se marcan con [**].
+
+---------------------------------------------------------------------
+A. DESAGREGACION (mayor impacto)
+---------------------------------------------------------------------
+#1 [**] FHMM bivariado [P, Q]
+    El FHMM exacto emitia solo P_total. Con Q_total como segunda
+    dimension de la emision gaussiana se discrimina mucho mejor: un
+    condensador y un motor pueden consumir los mismos kW pero con
+    relacion Q/P muy distinta.
+    Impacto: ALTO | Esfuerzo: BAJO  ->  IMPLEMENTADA (esta ronda)
+
+#2 Priors horarios en la transicion
+    Usar hourly_activity para modular la probabilidad de encendido de
+    cada equipo segun la hora (ej. compresor improbable a las 3 AM).
+    Reduce falsos positivos nocturnos del Viterbi.
+    Impacto: MEDIO | Esfuerzo: MEDIO | Estado: PENDIENTE
+
+#3 Priors de duracion (semi-Markov)
+    Tiempo minimo ON por equipo (un motor no arranca y para en 10 s).
+    Filtra eventos espurios y estabiliza el Gantt.
+    Impacto: MEDIO | Esfuerzo: MEDIO | Estado: PENDIENTE
+
+#4 Optimizacion combinatoria (CO)
+    Tercer algoritmo: en cada instante elegir la combinacion de estados
+    cuya suma mejor aproxima P_total (sin dinamica temporal). Sirve de
+    referencia para comparar contra FHMM.
+    Impacto: MEDIO | Esfuerzo: MEDIO | Estado: PENDIENTE
+
+---------------------------------------------------------------------
+B. CLUSTERING Y DETECCION DE EVENTOS
+---------------------------------------------------------------------
+#5 [**] Armonicos en el vector de features del clustering
+    cluster_appliances agrupaba con [abs_delta_P, abs_delta_I, THD_avg,
+    abs_delta_Q], pero los delta_H3/H5/H7 del PASO 1 no entraban al
+    vector. Incluirlos separa electronica de motores desde el propio
+    clustering, sin depender del post-nombrado heuristico.
+    Impacto: ALTO | Esfuerzo: MUY BAJO  ->  IMPLEMENTADA (esta ronda)
+
+#6 Seleccion automatica de K
+    Silhouette / Davies-Bouldin para proponer el numero optimo de
+    equipos en vez de fijarlo el usuario (elbow automatico).
+    Impacto: MEDIO | Esfuerzo: BAJO | Estado: PENDIENTE
+
+#7 Change-point detection
+    Sustituir/complementar los umbrales fijos de detect_events con
+    deteccion de cambios (PELT/Binseg de 'ruptures', o CUSUM con
+    umbral adaptativo por MAD). Menos dependencia del ajuste manual.
+    Impacto: MEDIO | Esfuerzo: MEDIO | Estado: PENDIENTE
+
+#8 Pareo ON/OFF con asignacion hungara
+    Ahora los eventos se emparejan por clustering y orden temporal.
+    El algoritmo hungaro empareja cada ON con su OFF mas plausible
+    (magnitud + cercania temporal) -> series desagregadas mas limpias.
+    Impacto: MEDIO | Esfuerzo: MEDIO | Estado: PENDIENTE
+
+---------------------------------------------------------------------
+C. VALIDACION Y BENCHMARKING (aprovechando el PASO 3)
+---------------------------------------------------------------------
+#9 Pestaña comparativa de algoritmos
+    Ejecutar K-Means vs GMM vs DBSCAN vs FHMM-eventos vs FHMM-exacto
+    y tabular las metricas del PASO 3 (F1, RE, NEP, MAE) en un ranking.
+    Responde "que configuracion es mejor para esta medicion" con datos.
+    Impacto: ALTO | Esfuerzo: MEDIO | Estado: PENDIENTE
+
+#10 Estabilidad de umbrales
+    Re-ejecutar con +-20% en current_threshold/power_threshold y medir
+    la varianza de F1/RE: si las metricas bailan, la desagregacion es
+    fragil.
+    Impacto: MEDIO | Esfuerzo: BAJO | Estado: PENDIENTE
+
+#11 Metrica de transiciones
+    Ademas de la matriz de estados (ON/OFF por muestra), evaluar
+    aciertos sobre EVENTOS (TP/FN de arranques detectados vs reales):
+    es la metrica que mas importa para el Gantt.
+    Impacto: MEDIO | Esfuerzo: BAJO | Estado: PENDIENTE
+
+#12 Intervalos de confianza (bootstrap)
+    Remuestrear eventos y recalcular metricas para dar F1 = 0.95 +- 0.03
+    en vez de un numero seco.
+    Impacto: MEDIO | Esfuerzo: BAJO | Estado: PENDIENTE
+
+---------------------------------------------------------------------
+D. NUEVOS ANALISIS DE VALOR
+---------------------------------------------------------------------
+#13 Fugas y standby
+    El residuo (baseline) tras desagregar cuantifica consumo fantasma:
+    kW minimos nocturnos x tarifa = ahorro potencial anual. Analisis
+    directo y muy apreciado en informes.
+    Impacto: ALTO | Esfuerzo: BAJO | Estado: PENDIENTE
+
+#14 Anomalias sobre el residuo
+    MAE movil del residuo; picos sostenidos = degradacion de equipo o
+    carga nueva no catalogada.
+    Impacto: MEDIO | Esfuerzo: BAJO | Estado: PENDIENTE
+
+#15 Calidad de energia por equipo
+    Ya hay THD y H3/H5/H7 por maquina: aportar costo de distorsion
+    (kVA demandado vs kW) y desbalance de fases por equipo (I L1/L2/L3
+    existen en el dataset).
+    Impacto: MEDIO | Esfuerzo: MEDIO | Estado: PENDIENTE
+
+#16 Coste economico por equipo
+    Cruzar la energia desagregada con tarifa horaria -> EUR/mes por
+    maquina y por turno.
+    Impacto: ALTO | Esfuerzo: BAJO | Estado: PENDIENTE
+
+#17 Persistencia de modelos
+    Guardar centroides/estados por sitio y reutilizarlos en la siguiente
+    medicion (etiquetado consistente entre datasets, menos
+    re-clasificaciones).
+    Impacto: MEDIO | Esfuerzo: MEDIO | Estado: PENDIENTE
+
+---------------------------------------------------------------------
+E. SI SE CONSIGUE GROUND TRUTH (medidor por equipo)
+---------------------------------------------------------------------
+#18 Deep learning NILM (Seq2Point / UNet-NILM / LSTM 1D-CNN)
+    Requiere submedicion real o sintetica. Se puede preentrenar con
+    datos sinteticos generados por el propio motor de eventos y
+    ajustar con pocas mediciones reales.
+    Impacto: ALTO (a largo plazo) | Esfuerzo: ALTO | Estado: PENDIENTE
+
+#19 Suite de benchmarks de NILMTK
+    Hoy nilmtk_available = false; instalarlo abriria CO/FHMM/seq2seq
+    estandar para comparar contra la implementacion propia.
+    Impacto: MEDIO | Esfuerzo: MEDIO | Estado: PENDIENTE
+
+---------------------------------------------------------------------
+ORDEN RECOMENDADO (relacion impacto/esfuerzo)
+---------------------------------------------------------------------
+1. #5  Armonicos en clustering        -> 30 min, mejora inmediata   [HECHA]
+2. #1  FHMM bivariado P+Q             -> mayor salto de calidad     [HECHA]
+3. #9 + #10  benchmark + estabilidad  -> evidencia del mejor algoritmo
+4. #13 Fugas/standby                  -> analisis de negocio directo
+5. #2  Priors horarios                -> cuando el Gantt nocturno
+                                         sea un problema real
+=====================================================================

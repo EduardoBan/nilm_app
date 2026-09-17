@@ -229,7 +229,16 @@ class NILMEngine:
         events['abs_delta_P'] = events['delta_P'].abs()
         events['abs_delta_I'] = events['delta_I'].abs()
         events['abs_delta_Q'] = events['delta_Q'].abs()
-        features = ['abs_delta_P', 'abs_delta_I', 'THD_avg', 'abs_delta_Q']
+        # MEJORA #5: los saltos armonicos transitorios del PASO 1 entran al
+        # vector de features -> separa electronica de potencia de motores
+        # desde el propio clustering, sin depender del post-nombrado.
+        for h_order in (3, 5, 7):
+            h_col = f'delta_H{h_order}'
+            events[f'abs_delta_H{h_order}'] = (
+                events[h_col].abs() if h_col in events else 0.0
+            )
+        features = ['abs_delta_P', 'abs_delta_I', 'THD_avg', 'abs_delta_Q',
+                    'abs_delta_H3', 'abs_delta_H5', 'abs_delta_H7']
         X = events[features].fillna(0).values
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
@@ -270,8 +279,10 @@ class NILMEngine:
         ]
 
         cluster_info = {}
-        # Sort clusters by average power descending
-        raw_clusters = sorted(events['cluster'].unique())
+        # Sort clusters by average power descending. Claves int nativas de
+        # Python: unique() devuelve np.int32 y contaminaria el JSON de salida
+        # ("id"/"machine_id" no serializables por json.dumps del servidor).
+        raw_clusters = sorted(int(c) for c in events['cluster'].unique())
         avg_powers = {c: float(events[events['cluster'] == c]['delta_P'].abs().mean()) for c in raw_clusters}
         sorted_clusters = sorted(raw_clusters, key=lambda c: avg_powers[c], reverse=True)
 
@@ -284,6 +295,18 @@ class NILMEngine:
             avg_q = float(sub['delta_Q'].abs().mean()) if 'delta_Q' in sub else 0.0
             avg_thd = float(sub['THD_avg'].mean())
 
+            # PASO 1: firma armonica transitoria del equipo (ΔH3/ΔH5/ΔH7 y
+            # ratio ΔH/ΔI en %). Un VFD/rectificador presenta ΔH alto con ΔP
+            # modesto; un motor DOL presenta ΔP/ΔQ alto con ΔH bajo.
+            avg_dh3 = float(sub['delta_H3'].abs().mean()) if 'delta_H3' in sub else 0.0
+            avg_dh5 = float(sub['delta_H5'].abs().mean()) if 'delta_H5' in sub else 0.0
+            avg_dh7 = float(sub['delta_H7'].abs().mean()) if 'delta_H7' in sub else 0.0
+            avg_harm_ratio = float(sub['harm_ratio_pct'].mean()) if 'harm_ratio_pct' in sub else 0.0
+            harm_sum = avg_dh3 + avg_dh5 + avg_dh7
+            load_class = self._classify_load_class(
+                avg_p, avg_i, avg_thd, avg_harm_ratio, harm_sum
+            )
+
             # Check Ground-Truth manual label override
             is_custom = False
             custom_name = None
@@ -295,8 +318,13 @@ class NILMEngine:
                 category = "Equipo Personalizado (Ground Truth)"
                 is_custom = True
             else:
-                # Heuristic machine naming based on electrical signature
-                if avg_p >= 25.0 or avg_i >= 40.0:
+                # Heuristic machine naming based on electrical signature.
+                # PASO 1: la firma armonica se evalua ANTES del tamano para no
+                # etiquetar como motor un rectificador con ΔP modesto.
+                if avg_harm_ratio >= 40.0 and harm_sum > 0.5 and avg_p < 25.0:
+                    name = f"Variador / Rectificador (ΔH {harm_sum:.1f} A)"
+                    category = "Variador de Frecuencia"
+                elif avg_p >= 25.0 or avg_i >= 40.0:
                     name = f"Compresor / Motor Principal ({avg_p:.1f} kW)"
                     category = "Compresor / Gran Potencia"
                 elif avg_thd >= 40.0:
@@ -320,6 +348,11 @@ class NILMEngine:
                 "avg_delta_i": round(avg_i, 2),
                 "avg_delta_q": round(avg_q, 2),
                 "avg_thd": round(avg_thd, 1),
+                "avg_delta_h3": round(avg_dh3, 3),
+                "avg_delta_h5": round(avg_dh5, 3),
+                "avg_delta_h7": round(avg_dh7, 3),
+                "harm_ratio_pct": round(avg_harm_ratio, 1),
+                "load_class": load_class,
                 "count": len(sub),
                 "on_count": int((sub['event_type'] == 'ON').sum()),
                 "off_count": int((sub['event_type'] == 'OFF').sum()),
@@ -520,7 +553,12 @@ class NILMEngine:
                 "energy_kwh": round(c_energy, 2),
                 "energy_share_pct": round(share_pct, 1),
                 "status": "Active" if total_active_mins > 0 else "Inactive",
-                "custom_label": bool(info.get('custom_label', False))
+                "custom_label": bool(info.get('custom_label', False)),
+                "avg_delta_h3": round(info.get('avg_delta_h3', 0.0), 3),
+                "avg_delta_h5": round(info.get('avg_delta_h5', 0.0), 3),
+                "avg_delta_h7": round(info.get('avg_delta_h7', 0.0), 3),
+                "harm_ratio_pct": round(info.get('harm_ratio_pct', 0.0), 1),
+                "load_class": info.get('load_class', 'Desconocido')
             })
 
         return disagg_power, baseline_curve, timeline_events, machine_stats
@@ -601,6 +639,8 @@ class NILMEngine:
                     "states": [{"name": "Apagado", "level": 0, "kw": 0.0, "minutes": 0.0, "energy_kwh": 0.0, "share_pct": 0.0}],
                     "n_states": 1, "state_count": 1,
                     "load_class": "Desconocido", "harmonic_signature": 0.0,
+                    "avg_delta_h3": 0.0, "avg_delta_h5": 0.0, "avg_delta_h7": 0.0,
+                    "harm_ratio_pct": 0.0,
                     "custom_label": bool(info.get('custom_label', False))
                 })
                 continue
@@ -631,7 +671,9 @@ class NILMEngine:
                 next_idx = np.searchsorted(timestamps, event_times[i + 1]) if i + 1 < len(event_times) else n_points
                 segment_starts.append(idx)
                 segment_ends.append(next_idx)
-                segment_states.append(assigned_states[i])
+                # int nativo: assigned_states es un array numpy y un np.int64
+                # llegaria tal cual al campo "state_level" del JSON.
+                segment_states.append(int(assigned_states[i]))
             
             self._build_fhmm_segments(df_work, segments_start=segment_starts, segments_end=segment_ends, seg_states=segment_states, state_levels=state_levels, disagg_power=disagg_power, c=c, timeline_events=timeline_events, info=info)
             self._build_fhmm_stats(df_work, c=c, info=info, disagg_power=disagg_power, state_levels=state_levels, timeline_events=timeline_events, machine_stats=machine_stats)
@@ -732,7 +774,12 @@ class NILMEngine:
         avg_p = info['avg_delta_p']
         
         if avg_thd >= 35.0 or info.get('harm_ratio_pct', 0) > 5:
-            load_class = "Eletronica de Potencia (VFD/Rectificador)"
+            load_class = info.get('load_class') or self._classify_load_class(
+                avg_p, delta_i, avg_thd,
+                float(info.get('harm_ratio_pct', 0.0)),
+                float(info.get('avg_delta_h3', 0.0)) + float(info.get('avg_delta_h5', 0.0))
+                + float(info.get('avg_delta_h7', 0.0))
+            )
         elif delta_i >= 20.0 and avg_p >= 15.0:
             load_class = "Motor Inductivo (Arranque DOL)"
         elif avg_p >= 5.0:
@@ -750,8 +797,299 @@ class NILMEngine:
             "states": state_stats, "n_states": len(state_levels),
             "state_count": len(state_levels),
             "load_class": load_class, "harmonic_signature": round(info.get('harm_ratio_pct', 0), 1),
+            "avg_delta_h3": round(info.get('avg_delta_h3', 0.0), 3),
+            "avg_delta_h5": round(info.get('avg_delta_h5', 0.0), 3),
+            "avg_delta_h7": round(info.get('avg_delta_h7', 0.0), 3),
+            "harm_ratio_pct": round(info.get('harm_ratio_pct', 0.0), 1),
             "custom_label": bool(info.get('custom_label', False))
         })
+
+    def _fhmm_exact_viterbi(self, df_work: pd.DataFrame,
+                            machine_states: Dict[int, List[float]],
+                            cluster_info: Dict[int, Any],
+                            max_comb_states: int = 400,
+                            max_points: int = 1500) -> Optional[Dict[str, Any]]:
+        """
+        PASO 2: FHMM exacto bivariado [P, Q] (MEJORA #1).
+
+        Se construye un HMM sobre el producto cartesiano de los estados de cada
+        equipo: la media de cada estado combinado es (carga base + suma de los
+        niveles activos, con componente Q proporcional al ratio Q/P del
+        equipo) y la matriz de transicion es el producto de Kronecker
+        de las cadenas individuales. Los parametros se fijan analiticamente (sin
+        EM) y la secuencia MAP se obtiene con el algoritmo de Viterbi.
+
+        Devuelve None cuando hmmlearn no esta disponible, cuando el producto de
+        estados supera `max_comb_states` (poda -> degrada al descenso por
+        eventos) o cuando no hay datos/estados suficientes para modelar.
+        """
+        if not hmmlearn_available or _GaussianHMM is None:
+            return None
+
+        clusters = sorted(cluster_info.keys())
+        if not clusters:
+            return None
+
+        # Estados por equipo = {Apagado (0 kW)} U niveles de potencia detectados.
+        dims: List[int] = []
+        levels: List[List[float]] = []
+        for c in clusters:
+            c_levels = sorted(float(v) for v in machine_states.get(c, []) if float(v) > 0.05)
+            if not c_levels:
+                c_levels = [float(cluster_info[c].get('avg_delta_p', 0.0))]
+            levels.append(c_levels)
+            dims.append(len(c_levels) + 1)
+
+        n_comb = int(np.prod(dims))
+        if n_comb < 2 or n_comb > max_comb_states:
+            return None
+
+        n_points = len(df_work)
+        if n_points < 3:
+            return None
+
+        # Saneo: NaN/Inf rompen la emision gaussiana y pueden producir un
+        # log-prob NaN/-Inf, que es JSON invalido y rompe el JSON.parse del
+        # frontend. Se sustituyen por 0 (ausencia de lectura).
+        p_total = np.nan_to_num(df_work['P_total'].to_numpy(dtype=float),
+                                nan=0.0, posinf=0.0, neginf=0.0)
+        # MEJORA #1: Q_total como segunda dimension de la emision.
+        if 'Q_total' in df_work.columns:
+            q_total = np.abs(np.nan_to_num(
+                df_work['Q_total'].to_numpy(dtype=float),
+                nan=0.0, posinf=0.0, neginf=0.0))
+        else:
+            q_total = np.zeros_like(p_total)
+        if not np.all(np.isfinite(p_total)) or not np.all(np.isfinite(q_total)):
+            return None
+
+        # Submuestreo uniforme para acotar el coste de Viterbi O(T * N^2).
+        step = max(1, int(np.ceil(n_points / float(max_points))))
+        obs_ds = np.column_stack([p_total[::step], q_total[::step]])
+        if len(obs_ds) < 3:
+            return None
+
+        # Carga base (percentil 5) y media de cada estado combinado.
+        base_p = float(np.percentile(p_total, 5))
+        base_q = float(np.percentile(q_total, 5))
+        # MEJORA #1: ratio Q/P por equipo (de los deltas del clustering) para
+        # construir la componente Q de cada estado combinado.
+        q_p_ratios: List[float] = []
+        for c in clusters:
+            info_c = cluster_info[c]
+            nominal = max(0.3, float(info_c.get('avg_delta_p', 0.0)))
+            qpr = float(info_c.get('avg_delta_q', 0.0)) / nominal
+            q_p_ratios.append(float(np.clip(qpr, 0.0, 5.0)))
+        combos = list(_cartesian_product(*[range(d) for d in dims]))
+        comb_means = np.array([
+            [base_p + sum(levels[i][s - 1] for i, s in enumerate(combo) if s > 0),
+             base_q + sum(levels[i][s - 1] * q_p_ratios[i]
+                          for i, s in enumerate(combo) if s > 0)]
+            for combo in combos
+        ], dtype=float)
+
+        # Transicion combinada = producto de Kronecker de las cadenas por equipo.
+        stay_p = 0.98
+        transmat = np.ones((1, 1), dtype=float)
+        for d in dims:
+            t_i = np.full((d, d), (1.0 - stay_p) / (d - 1), dtype=float)
+            np.fill_diagonal(t_i, stay_p)
+            transmat = np.kron(transmat, t_i)
+
+        # Desviacion robusta por dimension (MAD + suelo relativo).
+        def _sigma_robust(col: np.ndarray) -> float:
+            diffs_c = np.abs(np.diff(col))
+            sig_med = float(np.median(diffs_c)) if len(diffs_c) else 0.0
+            ptp_c = float(np.max(col) - np.min(col))
+            return max(sig_med, 0.02 * max(ptp_c, 1.0), 1e-3)
+
+        sigma_p = _sigma_robust(obs_ds[:, 0])
+        # La dimension Q usa su MAD propio con suelo ligado a sigma_p para no
+        # sobre-discriminar cuando Q es casi constante.
+        sigma_q = max(_sigma_robust(obs_ds[:, 1]), 0.05 * sigma_p)
+
+        try:
+            model = _GaussianHMM(n_components=n_comb, covariance_type='diag',
+                                 n_iter=0, init_params='', params='')
+            model.startprob_ = np.full(n_comb, 1.0 / n_comb, dtype=float)
+            model.transmat_ = transmat
+            model.means_ = comb_means.reshape(n_comb, 2)
+            model.covars_ = np.tile(
+                np.array([[sigma_p ** 2, sigma_q ** 2]], dtype=float), (n_comb, 1)
+            )
+            model.n_features = 2
+            logprob, seq = model.decode(obs_ds, algorithm='viterbi')
+        except Exception as exc:
+            print(f"FHMM exacto no aplicable ({n_comb} estados combinados): {exc}")
+            return None
+
+        logprob_val = float(logprob)
+        if not np.isfinite(logprob_val):
+            # Decodificacion degenerada: se prefiere el fallback por eventos
+            # antes que emitir un log-prob no serializable.
+            return None
+
+        seq_list = [int(s) for s in np.asarray(seq).flatten()]
+        return {
+            "method": "fhmm_exact_viterbi_hmmlearn",
+            "features": ["P", "Q"],
+            "logprob": round(logprob_val, 2),
+            "n_comb_states": n_comb,
+            "dims": dims,
+            "n_points_decoded": int(len(obs_ds)),
+            "n_points_full": int(n_points),
+            "downsample_step": int(step),
+            "combined_seq_ds": seq_list,
+            # Medias de la emision por estado combinado: columna 0 = P (kW),
+            # columna 1 = Q (kvar) de la emision bivariada [P, Q].
+            "state_means_kw": [round(float(m[0]), 3) for m in comb_means],
+            "state_means_q_kw": [round(float(m[1]), 3) for m in comb_means],
+        }
+
+    def _validate_reconstruction_error(self, df_work, disagg_power, baseline_curve) -> Dict[str, Any]:
+        """PASO 3: error de reconstruccion global (MAE/RMSE/MAPE) y porcentaje
+        de energia explicada por baseline + suma de curvas desagregadas."""
+        p_total = pd.to_numeric(df_work['P_total'], errors='coerce').fillna(0.0).to_numpy(dtype=float)
+        reconstructed = np.asarray(baseline_curve, dtype=float).copy()
+        for _c, curve in disagg_power.items():
+            reconstructed += np.nan_to_num(np.asarray(curve, dtype=float), nan=0.0)
+        err = p_total - reconstructed
+        mae = float(np.mean(np.abs(err)))
+        rmse = float(np.sqrt(np.mean(err ** 2)))
+        mape = float(np.mean(np.abs(err) / np.maximum(np.abs(p_total), 0.05)) * 100.0)
+        total_energy_meas = float(p_total.sum())
+        energy_rec = float(np.maximum(reconstructed, 0.0).sum())
+        explained = energy_rec / total_energy_meas * 100.0 if total_energy_meas > 0 else 0.0
+        # RE (Relative Error in Total Energy): error del acumulado final, sin
+        # importar el "cuando". NEP (Normalized Error in Power): error absoluto
+        # normalizado por la energia real total (comparable entre aparatos).
+        re_pct = abs(total_energy_meas - energy_rec) / total_energy_meas * 100.0 if total_energy_meas > 0 else 0.0
+        nep = float(np.sum(np.abs(err)) / total_energy_meas) if total_energy_meas > 0 else 0.0
+        return {
+            "mae_kw": round(mae, 3),
+            "rmse_kw": round(rmse, 3),
+            "mape_pct": round(mape, 1),
+            "energy_explained_pct": round(explained, 1),
+            "re_pct": round(re_pct, 1),
+            "nep": round(nep, 3),
+        }
+
+    @staticmethod
+    def _build_active_mask(timestamps: np.ndarray, on_times: np.ndarray,
+                           off_times: np.ndarray, n_points: int) -> np.ndarray:
+        """Referencia ON/OFF: cada evento ON activa el equipo hasta su proximo
+        OFF (o hasta el final si el OFF no fue detectado)."""
+        active = np.zeros(n_points, dtype=bool)
+        paired = sorted([(t, 1) for t in on_times] + [(t, 0) for t in off_times])
+        start = None
+        for t, kind in paired:
+            idx = int(np.searchsorted(timestamps, t))
+            idx = min(max(idx, 0), n_points)
+            if kind == 1 and start is None:
+                start = idx
+            elif kind == 0 and start is not None and idx > start:
+                active[start:idx] = True
+                start = None
+        if start is not None and start < n_points:
+            active[start:] = True
+        return active
+
+    def _validate_machine(self, df_work, events, cluster_info, disagg_power,
+                          c, timestamps) -> Dict[str, Any]:
+        """PASO 3: validacion de un equipo (consistencia de saltos ON y
+        matriz de confusion ON/OFF contra la referencia de eventos)."""
+        info = cluster_info[c]
+        n_points = len(df_work)
+        c_events = events[events['cluster'] == c].sort_values('timestamp') if len(events) else events
+        c_curve = (np.nan_to_num(np.asarray(disagg_power[c], dtype=float), nan=0.0)
+                   if c in disagg_power else np.zeros(n_points, dtype=float))
+
+        nominal = max(0.05, float(info.get('avg_delta_p', 0.0)))
+        jump_errors: List[float] = []
+        on_times = np.array([], dtype='datetime64[ns]')
+        off_times = np.array([], dtype='datetime64[ns]')
+        if len(c_events) > 0:
+            on_mask = (c_events['event_type'] == 'ON').to_numpy()
+            ev_times = pd.to_datetime(c_events['timestamp']).to_numpy(dtype='datetime64[ns]')
+            ev_deltas = np.abs(pd.to_numeric(c_events['delta_P'], errors='coerce').fillna(0.0).to_numpy())
+            on_times = ev_times[on_mask]
+            off_times = ev_times[~on_mask]
+            for i in np.nonzero(on_mask)[0]:
+                idx = int(np.searchsorted(timestamps, ev_times[i]))
+                if idx < 2 or idx >= n_points - 2:
+                    continue
+                pre = float(np.mean(c_curve[max(0, idx - 2):idx]))
+                post = float(np.mean(c_curve[idx:min(n_points, idx + 3)]))
+                jump = post - pre
+                if jump > 0:
+                    jump_errors.append(abs(jump - float(ev_deltas[i])))
+
+        threshold = max(0.05 * nominal, 0.02)
+        pred_on = c_curve > threshold
+        active = self._build_active_mask(timestamps, on_times, off_times, n_points)
+        tp = int(np.sum(active & pred_on))
+        fp = int(np.sum(~active & pred_on))
+        fn = int(np.sum(active & ~pred_on))
+        tn = int(np.sum(~active & ~pred_on))
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+        accuracy = (tp + tn) / max(1, tp + fp + fn + tn)
+
+        # Metricas de regresion (energia) contra la referencia por eventos:
+        # la senal de referencia vale el nivel nominal del equipo mientras esta
+        # activo y 0 kW cuando no. MAE/RMSE en kW; RE = error relativo de la
+        # energia total acumulada; NEP = error de potencia normalizado.
+        ref_signal = np.where(active, nominal, 0.0)
+        reg_err = c_curve - ref_signal
+        reg_mae = float(np.mean(np.abs(reg_err)))
+        reg_rmse = float(np.sqrt(np.mean(reg_err ** 2)))
+        e_ref = float(ref_signal.sum())
+        e_pred = float(np.maximum(c_curve, 0.0).sum())
+        re_pct = abs(e_ref - e_pred) / e_ref * 100.0 if e_ref > 0 else 0.0
+        nep = float(np.sum(np.abs(reg_err)) / e_ref) if e_ref > 0 else 0.0
+        return {
+            "id": int(c),
+            "name": info['name'],
+            "color": info['color'],
+            "n_on_events": int(len(on_times)),
+            "jump_mae_kw": round(float(np.mean(jump_errors)), 3) if jump_errors else 0.0,
+            "confusion": {"tp": tp, "fp": fp, "fn": fn, "tn": tn},
+            "precision": round(precision, 3),
+            "recall": round(recall, 3),
+            "f1": round(f1, 3),
+            "accuracy": round(accuracy, 3),
+            "reg_mae_kw": round(reg_mae, 3),
+            "reg_rmse_kw": round(reg_rmse, 3),
+            "re_pct": round(re_pct, 1),
+            "nep": round(nep, 3),
+        }
+
+    def _validate_disaggregation(self, df_work, events, cluster_info,
+                                 disagg_power, baseline_curve) -> Dict[str, Any]:
+        """PASO 3: valida la desagregacion (error de reconstruccion global +
+        confusion ON/OFF por equipo y global)."""
+        if len(df_work) < 3:
+            return {}
+        timestamps = pd.to_datetime(df_work['timestamp']).to_numpy(dtype='datetime64[ns]')
+        machines = []
+        cm = {"tp": 0, "fp": 0, "fn": 0, "tn": 0}
+        for c in sorted(cluster_info.keys()):
+            m = self._validate_machine(df_work, events, cluster_info, disagg_power, c, timestamps)
+            machines.append(m)
+            for k in cm:
+                cm[k] += m["confusion"][k]
+        precision = cm["tp"] / (cm["tp"] + cm["fp"]) if (cm["tp"] + cm["fp"]) > 0 else 0.0
+        recall = cm["tp"] / (cm["tp"] + cm["fn"]) if (cm["tp"] + cm["fn"]) > 0 else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+        accuracy = (cm["tp"] + cm["tn"]) / max(1, sum(cm.values()))
+        return {
+            "reconstruction": self._validate_reconstruction_error(df_work, disagg_power, baseline_curve),
+            "confusion_global": {**cm, "precision": round(precision, 3),
+                                 "recall": round(recall, 3), "f1": round(f1, 3),
+                                 "accuracy": round(accuracy, 3)},
+            "machines": machines,
+        }
 
     def analyze_dataset(self, dataset_id: str,
                         n_clusters: int = 4,
@@ -785,8 +1123,11 @@ class NILMEngine:
         else:
             warning = ""
         
+        fhmm_exact = None
         if use_fhmm and len(events_clustered) > 0:
             machine_states = self.estimate_machine_states(df_work, cluster_info, events_clustered, max_states)
+            # PASO 2: decodificacion MAP sobre el producto cartesiano de estados.
+            fhmm_exact = self._fhmm_exact_viterbi(df_work, machine_states, cluster_info)
             disagg_power, baseline_curve, timeline, machine_stats = self.disaggregate_load_fhmm(
                 df_work, events_clustered, cluster_info, machine_states
             )
@@ -838,12 +1179,40 @@ class NILMEngine:
                 "delta_q": round(float(r['delta_Q']), 2) if 'delta_Q' in r else 0.0,
                 "delta_i": round(float(r['delta_I']), 2),
                 "thd": round(float(r['THD_avg']), 1),
+                "delta_h3": round(float(r['delta_H3']), 3) if 'delta_H3' in r else 0.0,
+                "delta_h5": round(float(r['delta_H5']), 3) if 'delta_H5' in r else 0.0,
+                "delta_h7": round(float(r['delta_H7']), 3) if 'delta_H7' in r else 0.0,
+                "harm_ratio_pct": round(float(r['harm_ratio_pct']), 1) if 'harm_ratio_pct' in r else 0.0,
                 "cluster": int(r['cluster']),
                 "machine_name": r['machine_name'],
                 "color": r['color']
             })
 
         total_energy_kwh = round(float(df_work['P_total'].sum() * (10.0 / 3600.0)), 2)
+
+        # PASO 3: validacion de la desagregacion (error de reconstruccion +
+        # matriz de confusion ON/OFF por equipo y global).
+        validation = self._validate_disaggregation(
+            df_work, events_clustered, cluster_info, disagg_power, baseline_curve
+        )
+
+        # PASO 1: firma armonica transitoria agregada por equipo (ΔH3/ΔH5/ΔH7 y
+        # ratio ΔH/ΔI). Alimenta las barras agrupadas y el scatter ΔH5 vs ΔP.
+        harmonic_signatures = [
+            {
+                "id": int(c),
+                "name": cluster_info[c]['name'],
+                "color": cluster_info[c]['color'],
+                "avg_delta_h3": float(cluster_info[c].get('avg_delta_h3', 0.0)),
+                "avg_delta_h5": float(cluster_info[c].get('avg_delta_h5', 0.0)),
+                "avg_delta_h7": float(cluster_info[c].get('avg_delta_h7', 0.0)),
+                "harm_ratio_pct": float(cluster_info[c].get('harm_ratio_pct', 0.0)),
+                "avg_thd": float(cluster_info[c].get('avg_thd', 0.0)),
+                "avg_delta_p": float(cluster_info[c].get('avg_delta_p', 0.0)),
+                "count": int(cluster_info[c].get('count', 0))
+            }
+            for c in sorted(cluster_info.keys())
+        ]
 
         return {
             "dataset_id": dataset_id,
@@ -862,6 +1231,10 @@ class NILMEngine:
             "timeline_intervals": timeline[:300],
             "hourly_activity": hourly_distribution,
             "scatter_events": events_data,
+            "harmonic_signatures": harmonic_signatures,
+            "hmmlearn_available": hmmlearn_available,
+            "fhmm_exact": fhmm_exact,
+            "validation": validation,
             "fhmm_enabled": use_fhmm,
             "multi_state_models": {
                 str(c): {
