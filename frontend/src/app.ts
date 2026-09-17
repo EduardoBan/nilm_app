@@ -509,8 +509,6 @@ class NILMApp {
       this.renderHarmonicTab();
     } else if (this.activeTab === 'fhmm') {
       this.renderFhmmTab();
-    } else if (this.activeTab === 'validation') {
-      this.renderValidationTab();
     }
   }
 
@@ -958,75 +956,6 @@ class NILMApp {
       );
       this.chartCleanups.push(res.destroy);
     }
-  }
-
-  private renderValidationTab() {
-    if (!this.analysis) return;
-    const v = this.analysis.validation;
-
-    const summary = document.getElementById('validation-summary');
-    if (summary) {
-      if (!v || !v.reconstruction) {
-        summary.innerHTML = '<div class="empty-state"><p>Sin datos de validación en esta respuesta (backend anterior). Re-ejecuta el análisis.</p></div>';
-      } else {
-        const r = v.reconstruction;
-        const cg = v.confusion_global;
-        summary.innerHTML = `
-          <div class="val-card"><span>MAE reconstrucción</span><strong>${r.mae_kw.toFixed(3)} kW</strong></div>
-          <div class="val-card"><span>RMSE</span><strong>${r.rmse_kw.toFixed(3)} kW</strong></div>
-          <div class="val-card"><span>MAPE</span><strong>${r.mape_pct.toFixed(1)} %</strong></div>
-          <div class="val-card"><span>Energía explicada</span><strong>${r.energy_explained_pct.toFixed(1)} %</strong></div>
-          <div class="val-card"><span>RE (error energía total)</span><strong>${(r.re_pct ?? 0).toFixed(1)} %</strong></div>
-          <div class="val-card"><span>NEP global</span><strong>${(r.nep ?? 0).toFixed(3)}</strong></div>
-          <div class="val-card"><span>F1 global ON/OFF</span><strong>${cg.f1.toFixed(3)}</strong></div>
-          <div class="val-card"><span>Accuracy global</span><strong>${(cg.accuracy ?? 0).toFixed(3)}</strong></div>
-          <div class="val-card"><span>Precision / Recall</span><strong>${cg.precision.toFixed(3)} / ${cg.recall.toFixed(3)}</strong></div>
-          <div class="val-card"><span>Matriz global</span><strong>TP ${cg.tp} · FP ${cg.fp} · FN ${cg.fn} · TN ${cg.tn}</strong></div>`;
-      }
-    }
-
-    const machinesEl = document.getElementById('validation-machines');
-    if (machinesEl) {
-      if (!v || !v.machines || v.machines.length === 0) {
-        machinesEl.innerHTML = '<div class="empty-state"><p>Sin validación por equipo disponible.</p></div>';
-      } else {
-        machinesEl.innerHTML = v.machines.map(m => `
-          <div class="machine-val" style="border-left-color: ${m.color}">
-            <div class="machine-val-head">
-              <span class="machine-id">M${m.id}</span>
-              <strong>${escapeHtml(m.name)}</strong>
-              <span class="machine-f1">F1 ${m.f1.toFixed(3)}</span>
-            </div>
-            <div class="machine-val-row"><span>Arranques ref.</span><strong>${m.n_on_events}</strong></div>
-            <div class="machine-val-row"><span>MAE salto ON</span><strong>${m.jump_mae_kw.toFixed(3)} kW</strong></div>
-            <div class="machine-val-row"><span>P / R / Acc</span><strong>${m.precision.toFixed(3)} / ${m.recall.toFixed(3)} / ${(m.accuracy ?? 0).toFixed(3)}</strong></div>
-            <div class="machine-val-row"><span>MAE energía</span><strong>${(m.reg_mae_kw ?? 0).toFixed(3)} kW</strong></div>
-            <div class="machine-val-row"><span>RMSE energía</span><strong>${(m.reg_rmse_kw ?? 0).toFixed(3)} kW</strong></div>
-            <div class="machine-val-row"><span>RE / NEP</span><strong>${(m.re_pct ?? 0).toFixed(1)} % / ${(m.nep ?? 0).toFixed(3)}</strong></div>
-            <table class="conf-table">
-              <tr><th></th><th>Pred ON</th><th>Pred OFF</th></tr>
-              <tr><th>Ref ON</th><td class="tp">${m.confusion.tp}</td><td class="fn">${m.confusion.fn}</td></tr>
-              <tr><th>Ref OFF</th><td class="fp">${m.confusion.fp}</td><td class="tn">${m.confusion.tn}</td></tr>
-            </table>
-          </div>`).join('');
-      }
-    }
-
-    const canvas = document.getElementById('chart-validation-f1') as HTMLCanvasElement;
-    if (!canvas) return;
-    if (!v || !v.machines || v.machines.length === 0) {
-      const ctx = canvas.getContext('2d');
-      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
-      return;
-    }
-    ChartEngine.renderBarChart(
-      canvas,
-      v.machines.map(m => `M${m.id}`),
-      v.machines.map(m => m.f1),
-      '#10B981',
-      'F1',
-      'F1-score de detección ON/OFF por equipo (1.0 = desagregación perfecta)'
-    );
   }
 
   private showLoading(show: boolean) {

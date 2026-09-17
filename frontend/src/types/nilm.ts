@@ -170,55 +170,6 @@ export interface HourlyActivity {
   [key: string]: string | number;
 }
 
-/* PASO 3: validación de la desagregación */
-export interface ReconstructionError {
-  mae_kw: number;
-  rmse_kw: number;
-  mape_pct: number;
-  energy_explained_pct: number;
-  /* Métricas estándar NILMTK (regresión/energía) */
-  re_pct?: number;
-  nep?: number;
-}
-
-export interface ConfusionCounts {
-  tp: number;
-  fp: number;
-  fn: number;
-  tn: number;
-}
-
-export interface ConfusionGlobal extends ConfusionCounts {
-  precision: number;
-  recall: number;
-  f1: number;
-  accuracy?: number;
-}
-
-export interface MachineValidation {
-  id: number;
-  name: string;
-  color: string;
-  n_on_events: number;
-  jump_mae_kw: number;
-  confusion: ConfusionCounts;
-  precision: number;
-  recall: number;
-  f1: number;
-  accuracy?: number;
-  /* Métricas de regresión (energía) estándar NILMTK */
-  reg_mae_kw?: number;
-  reg_rmse_kw?: number;
-  re_pct?: number;
-  nep?: number;
-}
-
-export interface ValidationReport {
-  reconstruction: ReconstructionError;
-  confusion_global: ConfusionGlobal;
-  machines: MachineValidation[];
-}
-
 export interface NILMAnalysisResult {
   dataset_id: string;
   algorithm: string;
@@ -234,13 +185,11 @@ export interface NILMAnalysisResult {
   timeline_intervals: TimelineInterval[];
   hourly_activity: HourlyActivity[];
   scatter_events: ScatterEvent[];
-  /* PASO 1: firma armónica transitoria agregada por equipo */
+  /* STEP 1: transient harmonic signature added by equipment */
   harmonic_signatures?: HarmonicSignature[];
   /* PASO 2: FHMM exacto (Viterbi) y disponibilidad de hmmlearn */
   hmmlearn_available?: boolean;
   fhmm_exact?: FhmmExactInfo | null;
-  /* PASO 3: validación de la desagregación */
-  validation?: ValidationReport | null;
   /* Opción A: modelado multi-estado FHMM */
   fhmm_enabled?: boolean;
   max_states?: number;
@@ -258,4 +207,4 @@ export interface AnalysisParams {
   max_states: number;
 }
 
-export type ActiveTab = 'overview' | 'machines' | 'timeline' | 'features3d' | 'features2d' | 'hourly' | 'quality' | 'harmonic' | 'fhmm' | 'validation';
+export type ActiveTab = 'overview' | 'machines' | 'timeline' | 'features3d' | 'features2d' | 'hourly' | 'quality' | 'harmonic' | 'fhmm';

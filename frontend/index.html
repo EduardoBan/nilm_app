@@ -140,9 +140,8 @@
       <button class="nav-tab" data-tab="features2d">🔬 Espacios de Características</button>
       <button class="nav-tab" data-tab="hourly">📊 Distribución Horaria 24h</button>
       <button class="nav-tab" data-tab="quality">⚡ Calidad de Red y Armónicos</button>
-      <button class="nav-tab" data-tab="harmonic">🎸 Harmonic Signature</button>
+      <button class="nav-tab" data-tab="harmonic">Harmonic🎸 Signature</button>
       <button class="nav-tab" data-tab="fhmm">🧠 FHMM-Viterbi</button>
-<button class="nav-tab" data-tab="validation">✅ Validación</button>
     </nav>
 
     <!-- Tab 1: Overview & Disaggregated Power Curves -->
@@ -350,7 +349,7 @@
       </div>
     </section>
 
-    <!-- Tab: Firma Armónica por equipo (PASO 1: ΔH3/ΔH5/ΔH7 transitorios) -->
+    <!-- Tab: Harmonic Signature by Team (STEP 1: ΔH3/ΔH5/ΔH7 transients) -->
     <section id="tab-harmonic" class="tab-content">
       <div class="stack-grid">
         <div class="card">
@@ -391,34 +390,6 @@
         <div id="fhmm-exact-info" class="fhmm-meta"></div>
         <div class="chart-container">
           <canvas id="chart-fhmm-viterbi"></canvas>
-        </div>
-      </div>
-    </section>
-
-    <!-- Tab: Validación de la desagregación (PASO 3) -->
-    <section id="tab-validation" class="tab-content">
-      <div class="stack-grid">
-        <div class="card">
-          <div class="card-header">
-            <div>
-              <h2 class="card-title">✅ Validación de la Desagregación</h2>
-              <p class="card-subtitle">Error de reconstrucción (medido vs baseline + Σ equipos) y calidad de detección ON/OFF contra la referencia de eventos</p>
-            </div>
-          </div>
-          <div id="validation-summary" class="validation-grid"></div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <div>
-              <h2 class="card-title">🎯 Detección ON/OFF por equipo (matriz de confusión)</h2>
-              <p class="card-subtitle">Referencia = pareo de eventos ON/OFF · Predicción = curva desagregada &gt; umbral · F1 alto ⇒ desagregación fiable</p>
-            </div>
-          </div>
-          <div id="validation-machines" class="validation-grid"></div>
-          <div class="chart-container">
-            <canvas id="chart-validation-f1"></canvas>
-          </div>
         </div>
       </div>
     </section>

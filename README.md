@@ -76,11 +76,10 @@ Cuando NILMTK está disponible, el análisis devuelve los estados de potencia ag
 8. **FHMM Exacto (Viterbi · hmmlearn)**:
    - Bloque de metadatos con el algoritmo efectivamente aplicado (`fhmm_exact_viterbi_hmmlearn` o `event_driven_fallback`), log-probabilidad, número de estados combinados, dimensiones por equipo y muestras decodificadas con su factor de submuestreo.
    - Gráfico de la secuencia de estado conjunto decodificada por Viterbi. Si el producto cartesiano de estados supera las 400 combinaciones o `hmmlearn` no está instalado, la pestaña cae automáticamente a las curvas desagregadas multi-estado.
-9. **Validación de la Desagregación (PASO 3)**:
+9. **Validation of Disaggregation (STEP 3)**:
    - Error de reconstrucción global: **MAE / RMSE / MAPE** entre la potencia medida y `baseline + Σ equipos`, más el porcentaje de energía explicada por la desagregación.
    - **MAE del salto ON** por equipo: consistencia entre el ΔP del evento de arranque y el salto real en la curva desagregada.
-   - **Matriz de confusión ON/OFF** (global y por equipo) contra la referencia de eventos pareados, con **precision / recall / F1 / accuracy** y gráfico de barras del F1 por equipo.
-   - **Métricas de regresión (energía)** por equipo y global: **MAE/RMSE** de potencia (kW), **RE** (error relativo en la energía total acumulada, %) y **NEP** (error de potencia normalizado por la energía real).
+   - **Matriz de confusión ON/OFF** (global y por equipo) contra la referencia de eventos pareados, con **precision / recall / F1** y gráfico de barras del F1 por equipo.
 
 ## 🤖 Algoritmos de Inteligencia Artificial Disponibles
 
@@ -109,7 +108,7 @@ Actívelo con el interruptor **🧠 Multi-Estado (FHMM)** de la barra de control
 - **Propagación Integral**: El nombre personalizado se propaga en cascada hacia las curvas temporales desagregadas, los diagramas de Gantt, la nube 3D y los espacios de características 2D, acompañado del distintivo visual **GT**.
 - **Informe PDF Dinámico**: El botón **📄 Informe PDF** genera al vuelo el reporte técnico para la medición activa, incluyendo una tabla de fichas de cargas con los nombres Ground Truth y la distribución porcentual de consumo eléctrico.
 
-### 3. Refinamiento por Armónicos Transitorios
+  this.src = "";nto por Armónicos Transitorios
 El motor calcula el salto de corriente armónica (H3…H13, `ΔIh/ΔI₁`) en el instante de cada arranque y lo combina con el ratio reactivo/activo (ΔQ/ΔP) y el THD para clasificar la tecnología de la carga:
 
 | Firma del transitorio | Clasificación |
@@ -121,12 +120,3 @@ El motor calcula el salto de corriente armónica (H3…H13, `ΔIh/ΔI₁`) en el
 | ΔQ/ΔP bajo, armónicos bajos | 🔥 Carga Resistiva (Calefacción / Iluminación) |
 
 El resultado se muestra como badge en la tabla (columna *Tipo de Carga*) y en las fichas, junto a la **Firma Armónica ΔIh/ΔI₁** de cada equipo.
-
-### 4. Validación de la Desagregación (PASO 3)
-Pestaña **✅ Validación**: cada análisis calcula la clave `validation` con la calidad de la desagregación automática:
-
-- **Error de reconstrucción** (`reconstruction`): MAE/RMSE/MAPE entre la potencia medida y `baseline + Σ equipos`, porcentaje de energía explicada, **RE** (error relativo de la energía total acumulada) y **NEP** (error de potencia normalizado). Cuantifica cuánto de la señal real captura el modelo NILM.
-- **Consistencia de saltos** (`machines[].jump_mae_kw`): en cada arranque ON se compara el ΔP esperado del evento contra el salto real de la curva desagregada del equipo.
-- **Detección ON/OFF** (`confusion_global`, `machines[].confusion`): referencia = pareo de eventos (ON tras un arranque, OFF tras una parada); predicción = curva desagregada por encima del umbral (10 % del nominal). Se reportan TP/FP/FN/TN con **precision/recall/F1/accuracy**.
-- **Regresión por equipo** (`machines[].reg_mae_kw`, `reg_rmse_kw`, `re_pct`, `nep`): MAE/RMSE en kW contra la señal de referencia por eventos (nominal mientras activo, 0 kW si no); RE compara la energía acumulada predicha vs referida; NEP normaliza el error absoluto por la energía de referencia (comparable entre equipos de distinto tamaño).
-- La pestaña muestra tarjetas de métricas (MAE/RMSE/MAPE/RE/NEP + F1/accuracy), fichas por equipo con su matriz de confusión y un gráfico de barras del **F1 por equipo** (1.0 = desagregación perfecta).
