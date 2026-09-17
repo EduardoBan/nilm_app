@@ -174,3 +174,49 @@ def test_fhmm_exact_handles_degenerate_input():
     df_work.loc[df_work.index[:50], "P_total"] = np.nan
     clustered, info = eng.cluster_appliances(ev, n_clusters=1, algorithm="kmeans")
     eng._fhmm_exact_viterbi(df_work, {c: [1.0] for c in info}, info)
+
+
+def test_validation_report_keys_and_consistency():
+    """PASO 3: informe de validación completo y matemáticamente consistente."""
+    eng = NILMEngine(_FakeDM(make_df_harm()))
+    res = eng.analyze_dataset("synthetic", n_clusters=2, use_fhmm=True,
+                              max_states=2, power_threshold=0.5,
+                              current_threshold=2.0)
+
+    val = res.get("validation")
+    assert val, "analyze_dataset debe devolver 'validation' con datos suficientes"
+
+    rec = val["reconstruction"]
+    assert set(rec) >= {"mae_kw", "rmse_kw", "mape_pct", "energy_explained_pct"}
+    assert rec["mae_kw"] >= 0.0 and rec["rmse_kw"] >= rec["mae_kw"] * 0.999
+
+    cg = val["confusion_global"]
+    assert set(cg) >= {"tp", "fp", "fn", "tn", "precision", "recall", "f1"}
+    # La matriz global es la suma de las matrices por equipo.
+    tp = sum(m["confusion"]["tp"] for m in val["machines"])
+    fp = sum(m["confusion"]["fp"] for m in val["machines"])
+    fn = sum(m["confusion"]["fn"] for m in val["machines"])
+    tn = sum(m["confusion"]["tn"] for m in val["machines"])
+    assert (tp, fp, fn, tn) == (cg["tp"], cg["fp"], cg["fn"], cg["tn"])
+    assert 0.0 <= cg["precision"] <= 1.0 and 0.0 <= cg["recall"] <= 1.0
+    assert 0.0 <= cg["f1"] <= 1.0
+
+    assert len(val["machines"]) == res["n_clusters"]
+    for m in val["machines"]:
+        assert set(m) >= {
+            "id", "name", "color", "n_on_events", "jump_mae_kw",
+            "confusion", "precision", "recall", "f1",
+        }
+        assert m["n_on_events"] >= 0
+        assert m["jump_mae_kw"] >= 0.0
+        assert set(m["confusion"]) == {"tp", "fp", "fn", "tn"}
+
+
+def test_validation_empty_series_returns_empty_dict():
+    """PASO 3: con una serie demasiado corta no se emite informe (dict vacío)."""
+    eng = NILMEngine(_FakeDM())
+    tiny = pd.DataFrame({
+        "timestamp": pd.date_range("2024-01-01", periods=2, freq="1min"),
+        "P_total": [1.0, 1.0],
+    })
+    assert eng._validate_disaggregation(tiny, pd.DataFrame(), {}, {}, np.zeros(2)) == {}

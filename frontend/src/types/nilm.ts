@@ -170,6 +170,45 @@ export interface HourlyActivity {
   [key: string]: string | number;
 }
 
+/* PASO 3: validación de la desagregación */
+export interface ReconstructionError {
+  mae_kw: number;
+  rmse_kw: number;
+  mape_pct: number;
+  energy_explained_pct: number;
+}
+
+export interface ConfusionCounts {
+  tp: number;
+  fp: number;
+  fn: number;
+  tn: number;
+}
+
+export interface ConfusionGlobal extends ConfusionCounts {
+  precision: number;
+  recall: number;
+  f1: number;
+}
+
+export interface MachineValidation {
+  id: number;
+  name: string;
+  color: string;
+  n_on_events: number;
+  jump_mae_kw: number;
+  confusion: ConfusionCounts;
+  precision: number;
+  recall: number;
+  f1: number;
+}
+
+export interface ValidationReport {
+  reconstruction: ReconstructionError;
+  confusion_global: ConfusionGlobal;
+  machines: MachineValidation[];
+}
+
 export interface NILMAnalysisResult {
   dataset_id: string;
   algorithm: string;
@@ -190,6 +229,8 @@ export interface NILMAnalysisResult {
   /* PASO 2: FHMM exacto (Viterbi) y disponibilidad de hmmlearn */
   hmmlearn_available?: boolean;
   fhmm_exact?: FhmmExactInfo | null;
+  /* PASO 3: validación de la desagregación */
+  validation?: ValidationReport | null;
   /* Opción A: modelado multi-estado FHMM */
   fhmm_enabled?: boolean;
   max_states?: number;
@@ -207,4 +248,4 @@ export interface AnalysisParams {
   max_states: number;
 }
 
-export type ActiveTab = 'overview' | 'machines' | 'timeline' | 'features3d' | 'features2d' | 'hourly' | 'quality' | 'harmonic' | 'fhmm';
+export type ActiveTab = 'overview' | 'machines' | 'timeline' | 'features3d' | 'features2d' | 'hourly' | 'quality' | 'harmonic' | 'fhmm' | 'validation';

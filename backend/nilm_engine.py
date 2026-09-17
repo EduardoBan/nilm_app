@@ -270,8 +270,10 @@ class NILMEngine:
         ]
 
         cluster_info = {}
-        # Sort clusters by average power descending
-        raw_clusters = sorted(events['cluster'].unique())
+        # Sort clusters by average power descending. Claves int nativas de
+        # Python: unique() devuelve np.int32 y contaminaria el JSON de salida
+        # ("id"/"machine_id" no serializables por json.dumps del servidor).
+        raw_clusters = sorted(int(c) for c in events['cluster'].unique())
         avg_powers = {c: float(events[events['cluster'] == c]['delta_P'].abs().mean()) for c in raw_clusters}
         sorted_clusters = sorted(raw_clusters, key=lambda c: avg_powers[c], reverse=True)
 
@@ -660,7 +662,9 @@ class NILMEngine:
                 next_idx = np.searchsorted(timestamps, event_times[i + 1]) if i + 1 < len(event_times) else n_points
                 segment_starts.append(idx)
                 segment_ends.append(next_idx)
-                segment_states.append(assigned_states[i])
+                # int nativo: assigned_states es un array numpy y un np.int64
+                # llegaria tal cual al campo "state_level" del JSON.
+                segment_states.append(int(assigned_states[i]))
             
             self._build_fhmm_segments(df_work, segments_start=segment_starts, segments_end=segment_ends, seg_states=segment_states, state_levels=state_levels, disagg_power=disagg_power, c=c, timeline_events=timeline_events, info=info)
             self._build_fhmm_stats(df_work, c=c, info=info, disagg_power=disagg_power, state_levels=state_levels, timeline_events=timeline_events, machine_stats=machine_stats)
@@ -902,6 +906,123 @@ class NILMEngine:
             "state_means_kw": [round(float(v), 3) for v in comb_means],
         }
 
+    def _validate_reconstruction_error(self, df_work, disagg_power, baseline_curve) -> Dict[str, Any]:
+        """PASO 3: error de reconstruccion global (MAE/RMSE/MAPE) y porcentaje
+        de energia explicada por baseline + suma de curvas desagregadas."""
+        p_total = pd.to_numeric(df_work['P_total'], errors='coerce').fillna(0.0).to_numpy(dtype=float)
+        reconstructed = np.asarray(baseline_curve, dtype=float).copy()
+        for _c, curve in disagg_power.items():
+            reconstructed += np.nan_to_num(np.asarray(curve, dtype=float), nan=0.0)
+        err = p_total - reconstructed
+        mae = float(np.mean(np.abs(err)))
+        rmse = float(np.sqrt(np.mean(err ** 2)))
+        mape = float(np.mean(np.abs(err) / np.maximum(np.abs(p_total), 0.05)) * 100.0)
+        total_energy_meas = float(p_total.sum())
+        energy_rec = float(np.maximum(reconstructed, 0.0).sum())
+        explained = energy_rec / total_energy_meas * 100.0 if total_energy_meas > 0 else 0.0
+        return {
+            "mae_kw": round(mae, 3),
+            "rmse_kw": round(rmse, 3),
+            "mape_pct": round(mape, 1),
+            "energy_explained_pct": round(explained, 1),
+        }
+
+    @staticmethod
+    def _build_active_mask(timestamps: np.ndarray, on_times: np.ndarray,
+                           off_times: np.ndarray, n_points: int) -> np.ndarray:
+        """Referencia ON/OFF: cada evento ON activa el equipo hasta su proximo
+        OFF (o hasta el final si el OFF no fue detectado)."""
+        active = np.zeros(n_points, dtype=bool)
+        paired = sorted([(t, 1) for t in on_times] + [(t, 0) for t in off_times])
+        start = None
+        for t, kind in paired:
+            idx = int(np.searchsorted(timestamps, t))
+            idx = min(max(idx, 0), n_points)
+            if kind == 1 and start is None:
+                start = idx
+            elif kind == 0 and start is not None and idx > start:
+                active[start:idx] = True
+                start = None
+        if start is not None and start < n_points:
+            active[start:] = True
+        return active
+
+    def _validate_machine(self, df_work, events, cluster_info, disagg_power,
+                          c, timestamps) -> Dict[str, Any]:
+        """PASO 3: validacion de un equipo (consistencia de saltos ON y
+        matriz de confusion ON/OFF contra la referencia de eventos)."""
+        info = cluster_info[c]
+        n_points = len(df_work)
+        c_events = events[events['cluster'] == c].sort_values('timestamp') if len(events) else events
+        c_curve = (np.nan_to_num(np.asarray(disagg_power[c], dtype=float), nan=0.0)
+                   if c in disagg_power else np.zeros(n_points, dtype=float))
+
+        nominal = max(0.05, float(info.get('avg_delta_p', 0.0)))
+        jump_errors: List[float] = []
+        on_times = np.array([], dtype='datetime64[ns]')
+        off_times = np.array([], dtype='datetime64[ns]')
+        if len(c_events) > 0:
+            on_mask = (c_events['event_type'] == 'ON').to_numpy()
+            ev_times = pd.to_datetime(c_events['timestamp']).to_numpy(dtype='datetime64[ns]')
+            ev_deltas = np.abs(pd.to_numeric(c_events['delta_P'], errors='coerce').fillna(0.0).to_numpy())
+            on_times = ev_times[on_mask]
+            off_times = ev_times[~on_mask]
+            for i in np.nonzero(on_mask)[0]:
+                idx = int(np.searchsorted(timestamps, ev_times[i]))
+                if idx < 2 or idx >= n_points - 2:
+                    continue
+                pre = float(np.mean(c_curve[max(0, idx - 2):idx]))
+                post = float(np.mean(c_curve[idx:min(n_points, idx + 3)]))
+                jump = post - pre
+                if jump > 0:
+                    jump_errors.append(abs(jump - float(ev_deltas[i])))
+
+        threshold = max(0.05 * nominal, 0.02)
+        pred_on = c_curve > threshold
+        active = self._build_active_mask(timestamps, on_times, off_times, n_points)
+        tp = int(np.sum(active & pred_on))
+        fp = int(np.sum(~active & pred_on))
+        fn = int(np.sum(active & ~pred_on))
+        tn = int(np.sum(~active & ~pred_on))
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+        return {
+            "id": int(c),
+            "name": info['name'],
+            "color": info['color'],
+            "n_on_events": int(len(on_times)),
+            "jump_mae_kw": round(float(np.mean(jump_errors)), 3) if jump_errors else 0.0,
+            "confusion": {"tp": tp, "fp": fp, "fn": fn, "tn": tn},
+            "precision": round(precision, 3),
+            "recall": round(recall, 3),
+            "f1": round(f1, 3),
+        }
+
+    def _validate_disaggregation(self, df_work, events, cluster_info,
+                                 disagg_power, baseline_curve) -> Dict[str, Any]:
+        """PASO 3: valida la desagregacion (error de reconstruccion global +
+        confusion ON/OFF por equipo y global)."""
+        if len(df_work) < 3:
+            return {}
+        timestamps = pd.to_datetime(df_work['timestamp']).to_numpy(dtype='datetime64[ns]')
+        machines = []
+        cm = {"tp": 0, "fp": 0, "fn": 0, "tn": 0}
+        for c in sorted(cluster_info.keys()):
+            m = self._validate_machine(df_work, events, cluster_info, disagg_power, c, timestamps)
+            machines.append(m)
+            for k in cm:
+                cm[k] += m["confusion"][k]
+        precision = cm["tp"] / (cm["tp"] + cm["fp"]) if (cm["tp"] + cm["fp"]) > 0 else 0.0
+        recall = cm["tp"] / (cm["tp"] + cm["fn"]) if (cm["tp"] + cm["fn"]) > 0 else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+        return {
+            "reconstruction": self._validate_reconstruction_error(df_work, disagg_power, baseline_curve),
+            "confusion_global": {**cm, "precision": round(precision, 3),
+                                 "recall": round(recall, 3), "f1": round(f1, 3)},
+            "machines": machines,
+        }
+
     def analyze_dataset(self, dataset_id: str,
                         n_clusters: int = 4,
                         algorithm: str = "kmeans",
@@ -1001,6 +1122,12 @@ class NILMEngine:
 
         total_energy_kwh = round(float(df_work['P_total'].sum() * (10.0 / 3600.0)), 2)
 
+        # PASO 3: validacion de la desagregacion (error de reconstruccion +
+        # matriz de confusion ON/OFF por equipo y global).
+        validation = self._validate_disaggregation(
+            df_work, events_clustered, cluster_info, disagg_power, baseline_curve
+        )
+
         # PASO 1: firma armonica transitoria agregada por equipo (ΔH3/ΔH5/ΔH7 y
         # ratio ΔH/ΔI). Alimenta las barras agrupadas y el scatter ΔH5 vs ΔP.
         harmonic_signatures = [
@@ -1039,6 +1166,7 @@ class NILMEngine:
             "harmonic_signatures": harmonic_signatures,
             "hmmlearn_available": hmmlearn_available,
             "fhmm_exact": fhmm_exact,
+            "validation": validation,
             "fhmm_enabled": use_fhmm,
             "multi_state_models": {
                 str(c): {
