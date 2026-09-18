@@ -165,6 +165,14 @@ export interface FhmmExactInfo {
   /* MEJORA #1: emisión bivariada [P, Q] */
   features?: string[];
   state_means_q_kw?: number[];
+  /* MEJORA #2: priors horarios en la transición OFF→ON */
+  priors_used?: boolean;
+  hourly_priors?: Record<string, number[]>;
+  on_minutes_total_before?: number[];
+  on_minutes_total_after?: number[];
+  night_minutes_reduced?: number;
+  logprob_no_priors?: number | null;
+  logprob_priors?: number | null;
 }
 
 export interface HourlyActivity {

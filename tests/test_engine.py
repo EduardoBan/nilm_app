@@ -134,11 +134,22 @@ def test_fhmm_exact_viterbi_product_states():
     fx = res["fhmm_exact"]
     if not hmmlearn_available or fx is None:
         return
-    assert fx["method"] == "fhmm_exact_viterbi_hmmlearn"
+    assert fx["method"].startswith("fhmm_exact_viterbi")
     assert fx["n_comb_states"] == int(np.prod(fx["dims"]))
     assert len(fx["combined_seq_ds"]) == fx["n_points_decoded"]
     assert len(fx["state_means_kw"]) == fx["n_comb_states"]
     assert all(0 <= s < fx["n_comb_states"] for s in fx["combined_seq_ds"])
+
+    # MEJORA #2: si los priors horarios se aplicaron, el payload trae la
+    # comparativa antes/después y el log-prob sin priors.
+    if fx.get("priors_used"):
+        assert fx["method"] == "fhmm_exact_viterbi_priors_hmmlearn"
+        assert len(fx["on_minutes_total_before"]) == 24
+        assert len(fx["on_minutes_total_after"]) == 24
+        assert fx["night_minutes_reduced"] >= 0.0
+        assert fx["logprob_no_priors"] is not None
+        for rate in (fx.get("hourly_priors") or {}).values():
+            assert len(rate) == 24
 
 
 def test_fhmm_exact_pruning_degrades_without_error():

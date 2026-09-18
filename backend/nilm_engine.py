@@ -808,9 +808,11 @@ class NILMEngine:
                             machine_states: Dict[int, List[float]],
                             cluster_info: Dict[int, Any],
                             max_comb_states: int = 400,
-                            max_points: int = 1500) -> Optional[Dict[str, Any]]:
+                            max_points: int = 1500,
+                            events: Optional[pd.DataFrame] = None) -> Optional[Dict[str, Any]]:
         """
-        PASO 2: FHMM exacto bivariado [P, Q] (MEJORA #1).
+        PASO 2: FHMM exacto bivariado [P, Q] (MEJORA #1) con priors horarios
+        en la transicion (MEJORA #2).
 
         Se construye un HMM sobre el producto cartesiano de los estados de cada
         equipo: la media de cada estado combinado es (carga base + suma de los
@@ -818,6 +820,14 @@ class NILMEngine:
         equipo) y la matriz de transicion es el producto de Kronecker
         de las cadenas individuales. Los parametros se fijan analiticamente (sin
         EM) y la secuencia MAP se obtiene con el algoritmo de Viterbi.
+
+        MEJORA #2: cuando se reciben eventos, la probabilidad de transicion
+        OFF->ON de cada equipo se modula segun la hora del dia (perfil de
+        arranques observado con suavizado de Laplace). La secuencia se decodifica
+        por bloques horarios con su matriz de transicion propia; esto reduce los
+        falsos positivos nocturnos del Viterbi (ej. compresor a las 3 AM).
+        Se devuelven ademas las curvas de minutos ON por hora antes/despues y el
+        log-prob sin priors para comparar.
 
         Devuelve None cuando hmmlearn no esta disponible, cuando el producto de
         estados supera `max_comb_states` (poda -> degrada al descenso por
@@ -930,10 +940,13 @@ class NILMEngine:
             return None
 
         seq_list = [int(s) for s in np.asarray(seq).flatten()]
-        return {
+        result = {
             "method": "fhmm_exact_viterbi_hmmlearn",
             "features": ["P", "Q"],
             "logprob": round(logprob_val, 2),
+            "logprob_no_priors": round(logprob_val, 2),
+            "priors_used": False,
+            "night_minutes_reduced": 0.0,
             "n_comb_states": n_comb,
             "dims": dims,
             "n_points_decoded": int(len(obs_ds)),
@@ -945,6 +958,110 @@ class NILMEngine:
             "state_means_kw": [round(float(m[0]), 3) for m in comb_means],
             "state_means_q_kw": [round(float(m[1]), 3) for m in comb_means],
         }
+
+        # --- MEJORA #2: priors horarios en la transicion OFF->ON -----------
+        # Perfil de arranques por hora y equipo (suavizado de Laplace,
+        # media ~1). La secuencia MAP se re-decodifica por bloques horarios
+        # con un Viterbi propio de transicion dependiente del tiempo (que
+        # hmmlearn no soporta), reduciendo los falsos positivos nocturnos.
+        on_mask = np.array([[combo[i] > 0 for i in range(len(dims))] for combo in combos])
+        ts = pd.to_datetime(df_work['timestamp'])
+        med_dt_min = float(pd.Series(ts).diff().dt.total_seconds().median() or 60.0) / 60.0
+        min_per_point = max(med_dt_min * step, 1e-6)
+        hours_ds = ts.dt.hour.to_numpy(dtype=int)[::step]
+
+        def _minutes_on_by_hour(sequence: List[int]) -> List[float]:
+            on_count = on_mask[np.asarray(sequence, dtype=int)].sum(axis=1)
+            by_hour = np.zeros(24, dtype=float)
+            np.add.at(by_hour, hours_ds, on_count)
+            return [round(float(v), 1) for v in by_hour * min_per_point]
+
+        result["on_minutes_total_before"] = _minutes_on_by_hour(seq_list)
+        result["on_minutes_total_after"] = list(result["on_minutes_total_before"])
+
+        if (events is not None and len(events) > 0
+                and 'timestamp' in events and 'event_type' in events
+                and 'cluster' in events and 'P_total' in df_work.columns
+                and len(obs_ds) > 2):
+            try:
+                alpha = 1.0
+                ev_hours = pd.to_datetime(events['timestamp']).dt.hour.to_numpy(dtype=int)
+                ev_on = (events['event_type'].astype(str) == 'ON').to_numpy()
+                ev_cl = events['cluster'].astype(int).to_numpy()
+                hourly_priors: Dict[str, List[float]] = {}
+                rates: List[List[float]] = []
+                for c in clusters:
+                    on_c = ev_on & (ev_cl == c)
+                    counts = np.bincount(ev_hours[on_c], minlength=24).astype(float)
+                    total_on = float(counts.sum())
+                    # Propension relativa por hora (media ~1) con Laplace.
+                    rate = (counts + alpha) / (total_on + 24.0 * alpha) * 24.0
+                    rate = [round(float(v), 3) for v in np.clip(rate, 0.05, 5.0)]
+                    rates.append(rate)
+                    hourly_priors[str(c)] = rate
+
+                # Matrices de transicion moduladas por hora: se escala la masa
+                # OFF->ON de cada equipo por su rate horario y se renormaliza
+                # la fila de salida del estado apagado.
+                trans_by_hour: List[np.ndarray] = []
+                for h in range(24):
+                    mat_h = np.ones((1, 1), dtype=float)
+                    for i, d in enumerate(dims):
+                        t_i = np.full((d, d), (1.0 - stay_p) / (d - 1), dtype=float)
+                        np.fill_diagonal(t_i, stay_p)
+                        scale_h = float(rates[i][h])
+                        if scale_h != 1.0:
+                            t_i[0, 1:] *= scale_h
+                            t_i[0] /= t_i[0].sum()
+                        mat_h = np.kron(mat_h, t_i)
+                    trans_by_hour.append(mat_h)
+
+                # Log-verosimilitudes de emision bivariada [P, Q] (gaussiana
+                # diagonal identica a la del modelo hmmlearn).
+                covars = np.tile(
+                    np.array([[sigma_p ** 2, sigma_q ** 2]], dtype=float), (n_comb, 1)
+                )
+                diff_e = obs_ds[:, None, :] - comb_means[None, :, :]
+                mahal = (diff_e ** 2 / covars[None, :, :]).sum(axis=2)
+                log_det = np.log(covars).sum(axis=1)
+                obs_ll = -0.5 * (2.0 * np.log(2.0 * np.pi) + log_det[None, :] + mahal)
+
+                # Viterbi propio con transicion dependiente del tiempo (hmmlearn
+                # no soporta matrices de transicion por paso temporal).
+                log_T_by_hour = [np.log(m + 1e-300) for m in trans_by_hour]
+
+                def _viterbi_time(o_ll: np.ndarray) -> Tuple[np.ndarray, float]:
+                    t_len, n_n = o_ll.shape
+                    delta = np.full(n_n, np.log(1.0 / n_n)) + o_ll[0]
+                    psi = np.zeros((t_len, n_n), dtype=int)
+                    for t in range(1, t_len):
+                        cand = delta[:, None] + log_T_by_hour[int(hours_ds[t])]
+                        psi[t] = cand.argmax(axis=0)
+                        delta = cand.max(axis=0) + o_ll[t]
+                    seq_t = np.zeros(t_len, dtype=int)
+                    seq_t[-1] = int(delta.argmax())
+                    for t in range(t_len - 1, 0, -1):
+                        seq_t[t - 1] = int(psi[t, seq_t[t]])
+                    return seq_t, float(delta.max())
+
+                seq2, lp2 = _viterbi_time(obs_ll)
+                if np.isfinite(lp2):
+                    after = _minutes_on_by_hour([int(s) for s in seq2])
+                    night_hours = (22, 23, 0, 1, 2, 3, 4, 5)
+                    night_b = float(sum(result["on_minutes_total_before"][h] for h in night_hours))
+                    night_a = float(sum(after[h] for h in night_hours))
+                    result["night_minutes_reduced"] = round(max(0.0, night_b - night_a), 1)
+                    result["combined_seq_ds"] = [int(s) for s in seq2]
+                    result["on_minutes_total_after"] = after
+                    result["logprob"] = round(lp2, 2)
+                    result["logprob_priors"] = round(lp2, 2)
+                    result["priors_used"] = True
+                    result["hourly_priors"] = hourly_priors
+                    result["method"] = "fhmm_exact_viterbi_priors_hmmlearn"
+            except Exception as exc:
+                print(f"Priors horarios no aplicables: {exc}")
+
+        return result
 
     def _validate_reconstruction_error(self, df_work, disagg_power, baseline_curve) -> Dict[str, Any]:
         """PASO 3: error de reconstruccion global (MAE/RMSE/MAPE) y porcentaje
@@ -1127,7 +1244,9 @@ class NILMEngine:
         if use_fhmm and len(events_clustered) > 0:
             machine_states = self.estimate_machine_states(df_work, cluster_info, events_clustered, max_states)
             # PASO 2: decodificacion MAP sobre el producto cartesiano de estados.
-            fhmm_exact = self._fhmm_exact_viterbi(df_work, machine_states, cluster_info)
+            fhmm_exact = self._fhmm_exact_viterbi(
+                df_work, machine_states, cluster_info, events=events_clustered
+            )
             disagg_power, baseline_curve, timeline, machine_stats = self.disaggregate_load_fhmm(
                 df_work, events_clustered, cluster_info, machine_states
             )

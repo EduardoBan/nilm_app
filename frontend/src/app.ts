@@ -915,7 +915,7 @@ class NILMApp {
         meta.innerHTML = '<div class="empty-state"><p>Activa <strong>🧠 Multi-Estado (FHMM)</strong> y re-ejecuta el análisis para ver la decodificación Viterbi.</p></div>';
       } else if (!fx) {
         meta.innerHTML = '<div class="empty-state"><p>Sin bloque FHMM en esta respuesta (backend anterior).</p></div>';
-      } else if (fx.method !== 'fhmm_exact_viterbi_hmmlearn') {
+      } else if (!fx.method.startsWith('fhmm_exact_viterbi')) {
         meta.innerHTML = `<div class="fhmm-meta-grid">
           <div><span>Método</span><strong>Descenso por eventos (fallback)</strong></div>
           <div><span>Motivo</span><strong>${this.analysis.hmmlearn_available ? 'producto de estados > 400 (podado)' : 'hmmlearn no instalado'}</strong></div>
@@ -925,6 +925,7 @@ class NILMApp {
         meta.innerHTML = `<div class="fhmm-meta-grid">
           <div><span>Método</span><strong>FHMM exacto · Viterbi (hmmlearn)</strong></div>
           <div><span>Emisión</span><strong>${escapeHtml((fx.features ?? ['P']).join(' + '))}</strong></div>
+          <div><span>Priors horarios</span><strong>${fx.priors_used ? 'activos' : 'inactivos'}</strong></div>
           <div><span>Log-prob</span><strong>${fx.logprob !== null ? fx.logprob.toFixed(1) : '--'}</strong></div>
           <div><span>Estados combinados</span><strong>${fx.n_comb_states} (${escapeHtml(dimsTxt)})</strong></div>
           <div><span>Muestras decodificadas</span><strong>${fx.n_points_decoded} / ${fx.n_points_full} (paso ${fx.downsample_step})</strong></div>
@@ -932,10 +933,12 @@ class NILMApp {
       }
     }
 
+    this.renderFhmmHourlyCharts();
+
     const canvas = document.getElementById('chart-fhmm-viterbi') as HTMLCanvasElement;
     if (!canvas || !this.analysis.fhmm_enabled) return;
     const fx2 = this.analysis.fhmm_exact;
-    if (fx2 && fx2.method === 'fhmm_exact_viterbi_hmmlearn' && fx2.combined_seq_ds.length > 1) {
+    if (fx2 && fx2.method.startsWith('fhmm_exact_viterbi') && fx2.combined_seq_ds.length > 1) {
       // Secuencia de estado combinado (downsampleada) como serie temporal.
       const seq = fx2.combined_seq_ds;
       const labels = seq.map((_, i) => `${i}`);
@@ -958,6 +961,127 @@ class NILMApp {
         'Desagregación FHMM (descenso por eventos — hmmlearn no disponible o podado)'
       );
       this.chartCleanups.push(res.destroy);
+    }
+  }
+
+  /** MEJORA #2: priors horarios — perfil de arranque por equipo y comparativa minutos ON sin/con priors */
+  private renderFhmmHourlyCharts(): void {
+    const fx = this.analysis?.fhmm_exact;
+    if (!fx) return;
+    const palette = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#EC4899", "#06B6D4", "#84CC16"];
+
+    // Grafico 1: perfil horario del prior de arranque por equipo (mejora #2)
+    const c1 = document.getElementById("chart-fhmm-priors") as HTMLCanvasElement | null;
+    if (c1 && fx.priors_used && fx.hourly_priors) {
+      const ctx = c1.getContext("2d");
+      if (ctx) {
+        const W = c1.width, H = c1.height;
+        ctx.clearRect(0, 0, W, H);
+        const padL = 46, padR = 12, padT = 16, padB = 24;
+        const keys = Object.keys(fx.hourly_priors);
+        const vals = keys.map(k => fx.hourly_priors![k]);
+        const maxV = Math.max(1.2, ...vals.map(a => Math.max(...a)));
+        const plotH = H - padT - padB;
+        const xw = (W - padL - padR) / 23;
+        ctx.strokeStyle = "#e5e7eb";
+        ctx.beginPath();
+        for (let g = 0; g <= 4; g++) {
+          const y = padT + plotH * g / 4;
+          ctx.moveTo(padL, y);
+          ctx.lineTo(W - padR, y);
+        }
+        ctx.stroke();
+        ctx.fillStyle = "#6b7280";
+        ctx.font = "10px sans-serif";
+        ctx.textAlign = "right";
+        for (let g = 0; g <= 4; g++) {
+          ctx.fillText((maxV * (4 - g) / 4).toFixed(2), padL - 6, padT + plotH * g / 4 + 3);
+        }
+        ctx.textAlign = "center";
+        for (let h = 0; h <= 23; h += 3) {
+          ctx.fillText(String(h).padStart(2, "0") + "h", padL + h * xw, H - 8);
+        }
+        keys.forEach((k, i) => {
+          const arr = fx.hourly_priors![k];
+          ctx.strokeStyle = palette[i % palette.length];
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          arr.forEach((v, h) => {
+            const x = padL + h * xw;
+            const y = H - padB - v * (plotH / maxV);
+            if (h === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          });
+          ctx.stroke();
+        });
+        ctx.textAlign = "left";
+        ctx.font = "11px sans-serif";
+        keys.forEach((k, i) => {
+          const m = this.analysis?.machine_statistics?.find(s => String(s.id) === k);
+          ctx.fillStyle = palette[i % palette.length];
+          const label = m ? m.name.slice(0, 26) : "Equipo " + k;
+          ctx.fillText(label, padL + 4 + (i % 4) * 130, padT + 10 + Math.floor(i / 4) * 12);
+        });
+      }
+    }
+
+    // Grafico 2: minutos ON por hora, sin priors (gris) vs con priors (azul)
+    const c2 = document.getElementById("chart-fhmm-compare") as HTMLCanvasElement | null;
+    if (c2 && fx.on_minutes_total_before && fx.on_minutes_total_after) {
+      const ctx2 = c2.getContext("2d");
+      if (ctx2) {
+        const W = c2.width, H = c2.height;
+        ctx2.clearRect(0, 0, W, H);
+        const padL = 46, padR = 12, padT = 16, padB = 24;
+        const B = fx.on_minutes_total_before, A = fx.on_minutes_total_after;
+        const maxV = Math.max(1, ...B, ...A);
+        const plotH = H - padT - padB;
+        const bw = (W - padL - padR) / 24;
+        ctx2.strokeStyle = "#e5e7eb";
+        ctx2.beginPath();
+        for (let g = 0; g <= 4; g++) {
+          const y = padT + plotH * g / 4;
+          ctx2.moveTo(padL, y);
+          ctx2.lineTo(W - padR, y);
+        }
+        ctx2.stroke();
+        ctx2.fillStyle = "#6b7280";
+        ctx2.font = "10px sans-serif";
+        ctx2.textAlign = "right";
+        for (let g = 0; g <= 4; g++) {
+          ctx2.fillText(String(Math.round(maxV * (4 - g) / 4)), padL - 6, padT + plotH * g / 4 + 3);
+        }
+        B.forEach((v, h) => {
+          ctx2.fillStyle = "#9ca3af";
+          ctx2.fillRect(padL + h * bw + 1, H - padB - v * (plotH / maxV), Math.max(2, bw / 2 - 2), v * (plotH / maxV));
+        });
+        A.forEach((v, h) => {
+          ctx2.fillStyle = "#3B82F6";
+          ctx2.fillRect(padL + h * bw + bw / 2 + 1, H - padB - v * (plotH / maxV), Math.max(2, bw / 2 - 2), v * (plotH / maxV));
+        });
+        ctx2.fillStyle = "#6b7280";
+        ctx2.textAlign = "center";
+        for (let h = 0; h <= 23; h += 3) {
+          ctx2.fillText(String(h).padStart(2, "0") + "h", padL + h * bw + bw / 2, H - 8);
+        }
+        ctx2.textAlign = "left";
+        ctx2.font = "11px sans-serif";
+        ctx2.fillStyle = "#9ca3af";
+        ctx2.fillText("Sin priors", padL + 4, padT + 10);
+        ctx2.fillStyle = "#3B82F6";
+        ctx2.fillText("Con priors", padL + 74, padT + 10);
+      }
+    }
+
+    // Nota resumen en el bloque de metadatos FHMM
+    const info = document.getElementById("fhmm-exact-info");
+    if (info && fx.priors_used) {
+      const red = fx.night_minutes_reduced ?? 0;
+      const div = document.createElement("div");
+      div.className = "fhmm-priors-note";
+      div.textContent = "Priors horarios activos: minutos ON nocturnos (22h-06h) " +
+        (red > 0 ? "reducidos en " + red.toFixed(1) + " min" : "sin cambios") +
+        " - logprob " + fx.logprob + " con priors vs " + fx.logprob_no_priors + " sin priors.";
+      info.appendChild(div);
     }
   }
 
