@@ -131,3 +131,10 @@ Pestaña **✅ Validación**: cada análisis calcula la clave `validation` con l
 - **Detección ON/OFF** (`confusion_global`, `machines[].confusion`): referencia = pareo de eventos (ON tras un arranque, OFF tras una parada); predicción = curva desagregada por encima del umbral (10 % del nominal). Se reportan TP/FP/FN/TN con **precision/recall/F1/accuracy**.
 - **Regresión por equipo** (`machines[].reg_mae_kw`, `reg_rmse_kw`, `re_pct`, `nep`): MAE/RMSE en kW contra la señal de referencia por eventos (nominal mientras activo, 0 kW si no); RE compara la energía acumulada predicha vs referida; NEP normaliza el error absoluto por la energía de referencia (comparable entre equipos de distinto tamaño).
 - La pestaña muestra tarjetas de métricas (MAE/RMSE/MAPE/RE/NEP + F1/accuracy), fichas por equipo con su matriz de confusión y un gráfico de barras del **F1 por equipo** (1.0 = desagregación perfecta).
+
+### 5. Benchmark de Algoritmos y Estabilidad de Umbrales (MEJORAS #9 y #10)
+Pestaña **🏁 Benchmark**: re-ejecuta automáticamente el análisis (`/api/analyze`) con 6 configuraciones y compara las métricas de validación del PASO 3:
+
+- **Comparativa de algoritmos**: K-Means, GMM, DBSCAN y FHMM (K-Means + FHMM activo) con los umbrales nominales de la sesión.
+- **Estabilidad ±20%**: K-Means con `current_threshold`/`power_threshold` al −20% y +20%; se reporta F1 medio ± desviación típica y RE medio ± std (un CV alto = desagregación frágil frente al ajuste manual de umbrales).
+- **Salidas**: tabla ordenada por F1 (MAE, RMSE, RE %, F1, accuracy, nº de eventos y tiempo de ejecución por configuración), gráfico de barras del F1 y resumen con la mejor configuración y el coeficiente de variación del F1. Todo se mide en el cliente (`performance.now()`) sin cambios en el backend.

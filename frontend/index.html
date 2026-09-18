@@ -143,6 +143,7 @@
       <button class="nav-tab" data-tab="harmonic">🎸 Harmonic Signature</button>
       <button class="nav-tab" data-tab="fhmm">🧠 FHMM-Viterbi</button>
 <button class="nav-tab" data-tab="validation">✅ Validación</button>
+      <button class="nav-tab" data-tab="benchmark">🏁 Benchmark</button>
     </nav>
 
     <!-- Tab 1: Overview & Disaggregated Power Curves -->
@@ -428,6 +429,36 @@
           <div class="chart-container">
             <canvas id="chart-validation-f1"></canvas>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab: Benchmark de algoritmos + estabilidad de umbrales (MEJORA #9/#10) -->
+    <section id="tab-benchmark" class="tab-content">
+      <div class="stack-grid">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">🏁 Benchmark de Algoritmos y Estabilidad de Umbrales</h2>
+              <p class="card-subtitle">Compara K-Means / GMM / DBSCAN (+FHMM) y la variación del umbral ±20% sobre las métricas de validación (MAE, RMSE, RE, F1). Cada configuración re-ejecuta el análisis completo.</p>
+            </div>
+            <button id="btn-run-benchmark" class="btn-primary">🏁 Ejecutar Benchmark</button>
+          </div>
+          <div id="benchmark-progress" class="empty-state"><p>Ejecuta el benchmark para comparar configuraciones. Puede tardar varios segundos (9 ejecuciones del análisis).</p></div>
+          <div id="benchmark-summary" class="validation-grid"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">📊 Comparativa de configuraciones</h2>
+              <p class="card-subtitle">F1 de detección ON/OFF y error de energía (RE %) por configuración, ordenadas por F1</p>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="chart-benchmark-f1"></canvas>
+          </div>
+          <div id="benchmark-table"></div>
         </div>
       </div>
     </section>

@@ -24,7 +24,7 @@ A. DESAGREGACION (mayor impacto)
     Usar hourly_activity para modular la probabilidad de encendido de
     cada equipo segun la hora (ej. compresor improbable a las 3 AM).
     Reduce falsos positivos nocturnos del Viterbi.
-    Impacto: MEDIO | Esfuerzo: MEDIO | Estado: PENDIENTE
+    Impacto: MEDIO | Esfuerzo: MEDIO | Estado: HECHA (2026-09-18)
 
 #3 Priors de duracion (semi-Markov)
     Tiempo minimo ON por equipo (un motor no arranca y para en 10 s).
@@ -71,13 +71,13 @@ C. VALIDACION Y BENCHMARKING (aprovechando el PASO 3)
     Ejecutar K-Means vs GMM vs DBSCAN vs FHMM-eventos vs FHMM-exacto
     y tabular las metricas del PASO 3 (F1, RE, NEP, MAE) en un ranking.
     Responde "que configuracion es mejor para esta medicion" con datos.
-    Impacto: ALTO | Esfuerzo: MEDIO | Estado: PENDIENTE
+    Impacto: ALTO | Esfuerzo: MEDIO | Estado: HECHA (2026-09-18)
 
 #10 Estabilidad de umbrales
     Re-ejecutar con +-20% en current_threshold/power_threshold y medir
     la varianza de F1/RE: si las metricas bailan, la desagregacion es
     fragil.
-    Impacto: MEDIO | Esfuerzo: BAJO | Estado: PENDIENTE
+    Impacto: MEDIO | Esfuerzo: BAJO | Estado: HECHA (2026-09-18)
 
 #11 Metrica de transiciones
     Ademas de la matriz de estados (ON/OFF por muestra), evaluar
@@ -140,8 +140,29 @@ ORDEN RECOMENDADO (relacion impacto/esfuerzo)
 ---------------------------------------------------------------------
 1. #5  Armonicos en clustering        -> 30 min, mejora inmediata   [HECHA]
 2. #1  FHMM bivariado P+Q             -> mayor salto de calidad     [HECHA]
-3. #9 + #10  benchmark + estabilidad  -> evidencia del mejor algoritmo
+3. #9 + #10  benchmark + estabilidad  -> evidencia del mejor algoritmo [HECHA]
 4. #13 Fugas/standby                  -> analisis de negocio directo
 5. #2  Priors horarios                -> cuando el Gantt nocturno
-                                         sea un problema real
+                                         sea un problema real          [HECHA]
+=====================================================================
+
+---------------------------------------------------------------------
+DETALLE DE LAS MEJORAS IMPLEMENTADAS
+---------------------------------------------------------------------
+#9 + #10  Pestaña Benchmark y estabilidad de umbrales (2026-09-18)
+  Frontend-only: nueva pestaña "🏁 Benchmark" que re-ejecuta
+  /api/analyze con 6 configuraciones y tabula las metricas de
+  validacion del PASO 3:
+    - Algoritmos: K-Means, GMM, DBSCAN, FHMM (K-Means + FHMM activo)
+      con umbrales nominales.
+    - Estabilidad: K-Means con current/power threshold al -20% y +20%.
+  Salidas: tabla comparativa ordenada por F1 (MAE, RMSE, RE, F1,
+  Accuracy, eventos, tiempo por config.), grafico de barras F1 y
+  resumen con F1 medio +- desviacion tipica, RE medio +- std, coef.
+  de variacion del F1 (fragilidad de la desagregacion) y mejor
+  configuracion. Duracion medida con performance.now().
+  Archivos: frontend/index.html (seccion tab-benchmark),
+  frontend/src/types/nilm.ts (BenchmarkRow/BenchmarkResult,
+  ActiveTab + 'benchmark'), frontend/src/app.ts (runBenchmark /
+  renderBenchmarkTab). Sin cambios en backend ni CSS.
 =====================================================================

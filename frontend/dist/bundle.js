@@ -1666,6 +1666,11 @@ function escapeHtml(s        )         {
     .replace(/'/g, '&#39;');
 }
 
+/** Formatea un número opcionalmente NaN/undefined para tablas del benchmark. */
+function fmtNum(v        , digits        )         {
+  return Number.isFinite(v) ? v.toFixed(digits) : '--';
+}
+
 class NILMApp {
           currentDatasetId         = '';
           datasets                = [];
@@ -1676,6 +1681,9 @@ class NILMApp {
           activeTab            = 'overview';
   /* Opción A: modelado multi-estado FHMM (persistido entre sesiones) */
           useFhmm          = (localStorage.getItem('nilm-fhmm') ?? 'on') !== 'off';
+
+  /* MEJORA #9/#10: benchmark de algoritmos + estabilidad de umbrales */
+          benchmark                         = null;
 
           chartCleanups                    = [];
 
@@ -1764,6 +1772,12 @@ class NILMApp {
           this.showLoading(false);
         }
       }
+    });
+
+    // MEJORA #9/#10: benchmark de algoritmos y estabilidad de umbrales
+    const btnBenchmark = document.getElementById('btn-run-benchmark');
+    btnBenchmark?.addEventListener('click', () => {
+      this.runBenchmark();
     });
 
     // Tabs
@@ -2153,6 +2167,8 @@ class NILMApp {
       this.renderFhmmTab();
     } else if (this.activeTab === 'validation') {
       this.renderValidationTab();
+    } else if (this.activeTab === 'benchmark') {
+      this.renderBenchmarkTab();
     }
   }
 
@@ -2794,6 +2810,181 @@ class NILMApp {
       'F1',
       'F1-score de detección ON/OFF por equipo (1.0 = desagregación perfecta)'
     );
+  }
+
+  /* ================= MEJORA #9/#10: Benchmark ================= */
+
+          async runBenchmark() {
+    if (!this.currentDatasetId) {
+      this.showToast('Carga primero una medición para ejecutar el benchmark.', 'error');
+      return;
+    }
+
+    const clusterSlider = document.getElementById('slider-clusters')                    ;
+    const thresholdSlider = document.getElementById('slider-threshold')                    ;
+    const nClusters = clusterSlider ? parseInt(clusterSlider.value, 10) : 4;
+    const currentThr = thresholdSlider ? parseFloat(thresholdSlider.value) : 2.0;
+    const powerThr = 1.0;
+
+    const configs                                                                                                                          = [
+      { label: `K-Means (nominal)`, kind: 'algoritmo', algorithm: 'kmeans', cur: currentThr, pow: powerThr, fhmm: false },
+      { label: `GMM (nominal)`, kind: 'algoritmo', algorithm: 'gmm', cur: currentThr, pow: powerThr, fhmm: false },
+      { label: `DBSCAN (nominal)`, kind: 'algoritmo', algorithm: 'dbscan', cur: currentThr, pow: powerThr, fhmm: false },
+      { label: `FHMM (K-Means + FHMM)`, kind: 'algoritmo', algorithm: 'kmeans', cur: currentThr, pow: powerThr, fhmm: this.useFhmm },
+      { label: `Umbral −20% (${(currentThr * 0.8).toFixed(2)} A)`, kind: 'estabilidad', algorithm: 'kmeans', cur: currentThr * 0.8, pow: powerThr * 0.8, fhmm: false },
+      { label: `Umbral +20% (${(currentThr * 1.2).toFixed(2)} A)`, kind: 'estabilidad', algorithm: 'kmeans', cur: currentThr * 1.2, pow: powerThr * 1.2, fhmm: false }
+    ];
+
+    const progress = document.getElementById('benchmark-progress');
+    const btn = document.getElementById('btn-run-benchmark')                            ;
+    if (btn) btn.disabled = true;
+    if (progress) progress.innerHTML = '<p>⏳ Ejecutando benchmark… 0 / ' + configs.length + '</p>';
+
+    const rows                 = [];
+    for (let i = 0; i < configs.length; i++) {
+      const c = configs[i];
+      if (progress) progress.innerHTML = `<p>⏳ Ejecutando benchmark… ${i + 1} / ${configs.length} — <strong>${escapeHtml(c.label)}</strong></p>`;
+      const t0 = performance.now();
+      try {
+        const res = await api.runAnalysis({
+          dataset_id: this.currentDatasetId,
+          n_clusters: nClusters,
+          algorithm: c.algorithm       ,
+          current_threshold: c.cur,
+          power_threshold: c.pow,
+          use_fhmm: c.fhmm,
+          max_states: 3
+        });
+        const elapsed = (performance.now() - t0) / 1000;
+        const rec = res.validation?.reconstruction;
+        const cg = res.validation?.confusion_global;
+        rows.push({
+          config: c.label,
+          kind: c.kind,
+          algorithm: c.algorithm,
+          current_threshold: c.cur,
+          power_threshold: c.pow,
+          use_fhmm: c.fhmm,
+          n_clusters: res.n_clusters,
+          mae_kw: rec ? rec.mae_kw : NaN,
+          rmse_kw: rec ? rec.rmse_kw : NaN,
+          re_pct: rec ? (rec.re_pct ?? NaN) : NaN,
+          f1: cg ? cg.f1 : NaN,
+          accuracy: cg ? (cg.accuracy ?? NaN) : NaN,
+          total_events: res.total_events_detected,
+          elapsed_s: elapsed,
+          ok: !!(rec && cg)
+        });
+      } catch (err     ) {
+        console.error(err);
+        rows.push({
+          config: c.label, kind: c.kind, algorithm: c.algorithm,
+          current_threshold: c.cur, power_threshold: c.pow, use_fhmm: c.fhmm,
+          n_clusters: nClusters, mae_kw: NaN, rmse_kw: NaN, re_pct: NaN,
+          f1: NaN, accuracy: NaN, total_events: 0,
+          elapsed_s: (performance.now() - t0) / 1000, ok: false, error: err.message
+        });
+      }
+    }
+
+    // Estabilidad: media ± desviación típica de F1 / RE sobre las 3 variantes de umbral
+    const stab = rows.filter(r => r.kind === 'estabilidad' && r.ok);
+    const center = rows.find(r => r.kind === 'algoritmo' && r.algorithm === 'kmeans' && !r.use_fhmm && r.ok);
+    const stabAll = center ? [center, ...stab] : stab;
+    const mean = (a          ) => a.length ? a.reduce((s, v) => s + v, 0) / a.length : NaN;
+    const std = (a          ) => a.length > 1 ? Math.sqrt(mean(a.map(v => (v - mean(a)) ** 2))) : 0;
+
+    const f1s = stabAll.map(r => r.f1).filter(Number.isFinite);
+    const res_ = stabAll.map(r => r.re_pct).filter(Number.isFinite);
+    const okRows = rows.filter(r => r.ok && Number.isFinite(r.f1));
+    const best = okRows.length ? okRows.reduce((b, r) => (r.f1 > b.f1 ? r : b)) : null;
+
+    this.benchmark = {
+      rows,
+      f1_mean_stab: mean(f1s),
+      f1_std_stab: std(f1s),
+      re_mean_stab: mean(res_),
+      re_std_stab: std(res_),
+      best
+    };
+
+    if (progress) progress.innerHTML = '<p>✅ Benchmark completado. Resultados ordenados por F1 en la comparativa inferior.</p>';
+    if (btn) btn.disabled = false;
+    this.showToast('Benchmark completado (6 configuraciones evaluadas)', 'success');
+    this.renderBenchmarkTab();
+  }
+
+          renderBenchmarkTab() {
+    const progress = document.getElementById('benchmark-progress');
+    const summary = document.getElementById('benchmark-summary');
+    const tableEl = document.getElementById('benchmark-table');
+    const canvas = document.getElementById('chart-benchmark-f1')                            ;
+
+    if (!this.benchmark) {
+      if (progress && !progress.innerHTML.includes('⏳')) {
+        progress.innerHTML = '<p>Ejecuta el benchmark para comparar configuraciones. Puede tardar varios segundos (6 ejecuciones del análisis).</p>';
+      }
+      return;
+    }
+
+    const b = this.benchmark;
+
+    if (summary) {
+      summary.innerHTML = `
+        <div class="val-card"><span>Mejor configuración (F1)</span><strong>${b.best ? escapeHtml(b.best.config) : '—'}</strong></div>
+        <div class="val-card"><span>F1 mejor config.</span><strong>${b.best ? b.best.f1.toFixed(3) : '--'}</strong></div>
+        <div class="val-card"><span>F1 medio (estabilidad ±20%)</span><strong>${Number.isFinite(b.f1_mean_stab) ? b.f1_mean_stab.toFixed(3) : '--'} ± ${b.f1_std_stab.toFixed(3)}</strong></div>
+        <div class="val-card"><span>RE energía (estabilidad ±20%)</span><strong>${Number.isFinite(b.re_mean_stab) ? b.re_mean_stab.toFixed(1) : '--'} % ± ${b.re_std_stab.toFixed(1)}</strong></div>
+        <div class="val-card"><span>Coef. variación F1</span><strong>${Number.isFinite(b.f1_mean_stab) && b.f1_mean_stab > 0 ? ((b.f1_std_stab / b.f1_mean_stab) * 100).toFixed(1) : '--'} %</strong></div>
+        <div class="val-card"><span>Configuraciones evaluadas</span><strong>${b.rows.filter(r => r.ok).length} / ${b.rows.length}</strong></div>`;
+    }
+
+    const ranked = [...b.rows].sort((a, r) => {
+      if (a.ok !== r.ok) return a.ok ? -1 : 1;
+      return (Number.isFinite(r.f1) ? r.f1 : -1) - (Number.isFinite(a.f1) ? a.f1 : -1);
+    });
+
+    if (tableEl) {
+      if (!b.rows.some(r => r.ok)) {
+        tableEl.innerHTML = '<div class="empty-state"><p>No se pudo completar ninguna configuración. Revisa que el backend esté activo.</p></div>';
+      } else {
+        tableEl.innerHTML = `<div class="table-responsive"><table class="data-table">
+          <thead><tr><th>#</th><th>Configuración</th><th>Tipo</th><th>MAE (kW)</th><th>RMSE (kW)</th><th>RE (%)</th><th>F1</th><th>Accuracy</th><th>Eventos</th><th>Tiempo (s)</th></tr></thead>
+          <tbody>${ranked.map((r, i) => `
+            <tr style="${r.ok ? '' : 'opacity:0.55;'}">
+              <td>${i + 1}</td>
+              <td>${escapeHtml(r.config)}${r.use_fhmm ? ' 🧠' : ''}</td>
+              <td>${r.kind}</td>
+              <td>${fmtNum(r.mae_kw, 3)}</td>
+              <td>${fmtNum(r.rmse_kw, 3)}</td>
+              <td>${fmtNum(r.re_pct, 1)}</td>
+              <td><strong>${fmtNum(r.f1, 3)}</strong></td>
+              <td>${fmtNum(r.accuracy, 3)}</td>
+              <td>${r.total_events}</td>
+              <td>${r.elapsed_s.toFixed(2)}</td>
+            </tr>`).join('')}</tbody>
+        </table></div>`;
+      }
+    }
+
+    // Gráfico: F1 por configuración (ordenado por F1)
+    if (canvas) {
+      const okRowsChart = ranked.filter(r => r.ok && Number.isFinite(r.f1));
+      if (okRowsChart.length === 0) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+      } else {
+        const res = ChartEngine.renderBarChart(
+          canvas,
+          okRowsChart.map(r => r.config),
+          okRowsChart.map(r => r.f1),
+          '#00B5E2',
+          'F1',
+          'F1 ON/OFF por configuración (benchmark de algoritmos y estabilidad de umbrales ±20%)'
+        );
+        this.chartCleanups.push(res.destroy);
+      }
+    }
   }
 
           showLoading(show         ) {

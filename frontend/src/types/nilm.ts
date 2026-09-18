@@ -269,4 +269,33 @@ export interface AnalysisParams {
   max_states: number;
 }
 
-export type ActiveTab = 'overview' | 'machines' | 'timeline' | 'features3d' | 'features2d' | 'hourly' | 'quality' | 'harmonic' | 'fhmm' | 'validation';
+/* MEJORA #9/#10: benchmark de algoritmos + estabilidad de umbrales (frontend-only) */
+export interface BenchmarkRow {
+  config: string;
+  kind: 'algoritmo' | 'estabilidad';
+  algorithm: string;
+  current_threshold: number;
+  power_threshold: number;
+  use_fhmm: boolean;
+  n_clusters: number;
+  mae_kw: number;
+  rmse_kw: number;
+  re_pct: number;
+  f1: number;
+  accuracy: number;
+  total_events: number;
+  elapsed_s: number;
+  ok: boolean;
+  error?: string;
+}
+
+export interface BenchmarkResult {
+  rows: BenchmarkRow[];
+  f1_mean_stab: number;
+  f1_std_stab: number;
+  re_mean_stab: number;
+  re_std_stab: number;
+  best: BenchmarkRow | null;
+}
+
+export type ActiveTab = 'overview' | 'machines' | 'timeline' | 'features3d' | 'features2d' | 'hourly' | 'quality' | 'harmonic' | 'fhmm' | 'validation' | 'benchmark';
