@@ -1111,9 +1111,9 @@ export class ChartEngine {
     color: string = '#00B5E2',
     unit: string = '',
     title: string = ''
-  ) {
+  ): { destroy: () => void } {
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!ctx) return { destroy: () => {} };
 
     const size = resolveSize(canvas, 500, 320);
     const dpr = window.devicePixelRatio || 1;
@@ -1166,6 +1166,8 @@ export class ChartEngine {
         ctx.fillText(labels[i] || '', x + barW / 2, height - 10);
       }
     });
+
+    return { destroy: () => {} };
   }
 
   /**

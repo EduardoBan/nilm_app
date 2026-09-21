@@ -1200,6 +1200,7 @@ class NILMApp {
     if (btn) btn.disabled = true;
     if (progress) progress.innerHTML = '<p>⏳ Ejecutando benchmark… 0 / ' + configs.length + '</p>';
 
+    try {
     const rows: BenchmarkRow[] = [];
     for (let i = 0; i < configs.length; i++) {
       const c = configs[i];
@@ -1272,6 +1273,12 @@ class NILMApp {
     if (btn) btn.disabled = false;
     this.showToast('Benchmark completado (6 configuraciones evaluadas)', 'success');
     this.renderBenchmarkTab();
+    } catch (err: any) {
+      console.error('Error fatal en benchmark:', err);
+      if (progress) progress.innerHTML = `<p>❌ Error en el benchmark: ${escapeHtml(String(err?.message ?? err))}</p>`;
+      if (btn) btn.disabled = false;
+      this.showToast(`Error en el benchmark: ${err?.message ?? err}`, 'error');
+    }
   }
 
   private renderBenchmarkTab() {
@@ -1342,7 +1349,9 @@ class NILMApp {
           'F1',
           'F1 ON/OFF por configuración (benchmark de algoritmos y estabilidad de umbrales ±20%)'
         );
-        this.chartCleanups.push(res.destroy);
+        if (res && typeof res.destroy === 'function') {
+          this.chartCleanups.push(res.destroy);
+        }
       }
     }
   }

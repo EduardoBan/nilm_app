@@ -284,6 +284,17 @@ class ReportHandler(BaseHandler):
             self.set_status(500)
             self.write_json({"status": "error", "message": str(e)})
 
+class FrontendStaticHandler(tornado.web.StaticFileHandler):
+    """Sirve el frontend revalidando siempre la caché del navegador.
+
+    Evita que el navegador ejecute un bundle.js obsoleto (sin el listener del
+    botón, p. ej.) cuando el archivo en disco ya cambió: con 'no-cache' el
+    navegador pregunta por ETag/Last-Modified en cada carga y recibe 304 solo
+    si el archivo no cambió.
+    """
+    def set_extra_headers(self, path):
+        self.set_header("Cache-Control", "no-cache, must-revalidate")
+
 def make_app():
     frontend_dir = os.path.join(BASE_DIR, "frontend")
     return tornado.web.Application([
@@ -295,7 +306,7 @@ def make_app():
         (r"/api/analyze", AnalyzeHandler),
         (r"/api/labels", LabelsHandler),
         (r"/api/report", ReportHandler),
-        (r"/(.*)", tornado.web.StaticFileHandler, {
+        (r"/(.*)", FrontendStaticHandler, {
             "path": frontend_dir,
             "default_filename": "index.html"
         }),

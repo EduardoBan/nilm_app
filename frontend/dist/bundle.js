@@ -1119,9 +1119,9 @@ class ChartEngine {
     color         = '#00B5E2',
     unit         = '',
     title         = ''
-  ) {
+  )                          {
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!ctx) return { destroy: () => {} };
 
     const size = resolveSize(canvas, 500, 320);
     const dpr = window.devicePixelRatio || 1;
@@ -1174,6 +1174,8 @@ class ChartEngine {
         ctx.fillText(labels[i] || '', x + barW / 2, height - 10);
       }
     });
+
+    return { destroy: () => {} };
   }
 
   /**
@@ -2840,6 +2842,7 @@ class NILMApp {
     if (btn) btn.disabled = true;
     if (progress) progress.innerHTML = '<p>⏳ Ejecutando benchmark… 0 / ' + configs.length + '</p>';
 
+    try {
     const rows                 = [];
     for (let i = 0; i < configs.length; i++) {
       const c = configs[i];
@@ -2912,6 +2915,12 @@ class NILMApp {
     if (btn) btn.disabled = false;
     this.showToast('Benchmark completado (6 configuraciones evaluadas)', 'success');
     this.renderBenchmarkTab();
+    } catch (err     ) {
+      console.error('Error fatal en benchmark:', err);
+      if (progress) progress.innerHTML = `<p>❌ Error en el benchmark: ${escapeHtml(String(err?.message ?? err))}</p>`;
+      if (btn) btn.disabled = false;
+      this.showToast(`Error en el benchmark: ${err?.message ?? err}`, 'error');
+    }
   }
 
           renderBenchmarkTab() {
@@ -2982,7 +2991,9 @@ class NILMApp {
           'F1',
           'F1 ON/OFF por configuración (benchmark de algoritmos y estabilidad de umbrales ±20%)'
         );
-        this.chartCleanups.push(res.destroy);
+        if (res && typeof res.destroy === 'function') {
+          this.chartCleanups.push(res.destroy);
+        }
       }
     }
   }
