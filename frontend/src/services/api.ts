@@ -7,7 +7,8 @@ import {
   TimeseriesData, 
   HarmonicsData, 
   NILMAnalysisResult, 
-  AnalysisParams 
+  AnalysisParams,
+  PowerQualityReport
 } from '../types/nilm';
 
 export class NILMApiService {
@@ -41,6 +42,14 @@ export class NILMApiService {
   async getHarmonics(datasetId: string): Promise<HarmonicsData> {
     const res = await fetch(`${this.baseUrl}/api/harmonics?dataset_id=${encodeURIComponent(datasetId)}`);
     if (!res.ok) throw new Error(`Error fetching harmonics: ${res.statusText}`);
+    const json = await res.json();
+    return json.data;
+  }
+
+  /** MEJORA #21: diagnóstico de calidad energética (EN 50160 / IEC) */
+  async getPowerQuality(datasetId: string, maxPoints: number = 600): Promise<PowerQualityReport> {
+    const res = await fetch(`${this.baseUrl}/api/powerquality?dataset_id=${encodeURIComponent(datasetId)}&max_points=${maxPoints}`);
+    if (!res.ok) throw new Error(`Error fetching power quality: ${res.statusText}`);
     const json = await res.json();
     return json.data;
   }

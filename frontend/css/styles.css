@@ -1441,3 +1441,14 @@ body {
 .state-count-badge .flag {
   font-size: 0.72rem;
 }
+
+/* MEJORA #21: checks de calidad energetica (ok/warn/bad) */
+.pq-check-ok { border-left: 4px solid #10B981; }
+.pq-check-warn { border-left: 4px solid #F59E0B; }
+.pq-check-bad { border-left: 4px solid #EF4444; }
+.pq-check-ok strong { color: #10B981; }
+.pq-check-warn strong { color: #F59E0B; }
+.pq-check-bad strong { color: #EF4444; }
+#pq-checks .val-card { display: flex; flex-direction: column; gap: 4px; }
+#pq-checks .val-card small { opacity: 0.75; }
+#pq-checks .val-card em { opacity: 0.6; font-size: 0.85em; font-style: normal; }

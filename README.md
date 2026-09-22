@@ -70,6 +70,7 @@ Cuando NILMTK está disponible, el análisis devuelve los estados de potencia ag
    - Espectro de armónicos de corriente (fundamental hasta el armónico 25) para auditoría de calidad eléctrica.
 6. **Fichas Técnicas y Reparto Energético**:
    - Potencia nominal estimada por equipo (kW), corriente de arranque (A), factor de distorsión THD (%), energía total consumida (kWh) y porcentaje de participación en la factura eléctrica.
+   - **Rasgos extendidos (MEJORA #20)**: ratio de inrush (×), cos φ medio y tipo de fase (*Monofásico (1 fase)* / *Asimétrico (2 fases)* / *Trifásico equilibrado*), presentes tanto en la tabla resumen como en las fichas técnicas de cada equipo.
 7. **Firma Armónica Transitoria por Equipo (ΔH3 / ΔH5 / ΔH7)**:
    - Barras agrupadas con el salto medio de corriente armónica por orden en el instante de arranque de cada equipo, más un plano $\Delta H_5$ vs $|\Delta P|$ por evento.
    - Permite discriminar **electrónica de potencia** (ΔH alto con ΔP modesto, arriba-izquierda) de **motores de arranque directo** (ΔP alto con ΔH bajo, abajo-derecha), incluso antes de mirar el THD en régimen permanente.
@@ -82,6 +83,8 @@ Cuando NILMTK está disponible, el análisis devuelve los estados de potencia ag
    - **MAE del salto ON** por equipo: consistencia entre el ΔP del evento de arranque y el salto real en la curva desagregada.
    - **Matriz de confusión ON/OFF** (global y por equipo) contra la referencia de eventos pareados, con **precision / recall / F1 / accuracy** y gráfico de barras del F1 por equipo.
    - **Métricas de regresión (energía)** por equipo y global: **MAE/RMSE** de potencia (kW), **RE** (error relativo en la energía total acumulada, %) y **NEP** (error de potencia normalizado por la energía real).
+10. **Diagnóstico de Calidad Energética (MEJORA #21)**:
+    - Pestaña **🔎 Calidad Energética** (`GET /api/powerquality`): semáforo de cumplimiento EN 50160 / IEC 61000 / IEEE C57.110 para tensión (±10 %), desequilibrio, THD U/I, corriente de neutro, K-factor y frecuencia; curvas de tensión por fase, THD U + desequilibrio y neutro vs. fases; y tabla de eventos sostenidos de **sag/swell** con duración, tensión extrema, profundidad y fase más afectada.
 
 ## 🤖 Algoritmos de Inteligencia Artificial Disponibles
 
@@ -99,7 +102,7 @@ Actívelo con el interruptor **🧠 Multi-Estado (FHMM)** de la barra de control
 
 - **Estimación de niveles** (`estimate_machine_states`): los saltos de potencia de arranque (ΔP) de cada equipo se agrupan con K-Means + validación por silueta para detectar **estados intermedios** (ej. compresor en *Plena Carga* / *Marcha en Vacío* / *Apagado*).
 - **Inferencia MAP factorial** (`disaggregate_load_fhmm`): la señal agregada se modela como la superposición `P_total(t) ≈ P_base + Σ nivel_c(estado_c(t))`. Se intentan dos estrategias en cascada:
-  1. **FHMM exacto** (`_fhmm_exact_viterbi`): con `hmmlearn` se construye un `GaussianHMM` sobre el **producto cartesiano** de estados. La media combinada es `base + Σ niveles` y la matriz de transición combinada resulta del **producto de Kronecker** de las individuales (equipos independientes). La emisión es **bivariada [P, Q]**: se discrimina con la relación Q/P además de la potencia (un condensador y un motor pueden consumir los mismos kW con Q opuesto). Los parámetros se fijan analíticamente y se decodifica con **Viterbi** (sin re-estimación EM), submuestreando a ≤1500 puntos para acotar el costo. Si el producto de estados excede 400 combinaciones, el bloque se **poda** y se degrada al paso 2. Sobre este modelo, los **priors horarios** re-escalan la transición OFF→ON de cada equipo según su historial de arranques por hora y se re-decodifica con Viterbi temporal (`fhmm_exact_viterbi_priors_hmmlearn`), reportando la mejora del log-prob frente al modelo sin priors.
+  QUERY LENGTH LIMIT EXCEEDED. MAX ALLOWED QUERY : 500 CHARS
   2. **Descenso por eventos** (fallback): inicialización voraz + refinamiento **Viterbi por bloques** con emisiones gaussianas y costo de conmutación. Se usa cuando `hmmlearn` no está instalado o el modelo exacto es intratable.
 - **Salidas**: curvas de potencia multi-nivel por equipo, Gantt con el nombre del estado activo, energía/tiempo por estado en las fichas de equipos (`multi_state_models` y `machine_statistics[].states`), firmas armónicas por equipo (`harmonic_signatures`) y diagnóstico del FHMM (`fhmm_exact`, `hmmlearn_available`) para la pestaña **🧠 FHMM-Viterbi**.
 
@@ -130,11 +133,81 @@ Pestaña **✅ Validación**: cada análisis calcula la clave `validation` con l
 - **Consistencia de saltos** (`machines[].jump_mae_kw`): en cada arranque ON se compara el ΔP esperado del evento contra el salto real de la curva desagregada del equipo.
 - **Detección ON/OFF** (`confusion_global`, `machines[].confusion`): referencia = pareo de eventos (ON tras un arranque, OFF tras una parada); predicción = curva desagregada por encima del umbral (10 % del nominal). Se reportan TP/FP/FN/TN con **precision/recall/F1/accuracy**.
 - **Regresión por equipo** (`machines[].reg_mae_kw`, `reg_rmse_kw`, `re_pct`, `nep`): MAE/RMSE en kW contra la señal de referencia por eventos (nominal mientras activo, 0 kW si no); RE compara la energía acumulada predicha vs referida; NEP normaliza el error absoluto por la energía de referencia (comparable entre equipos de distinto tamaño).
-- La pestaña muestra tarjetas de métricas (MAE/RMSE/MAPE/RE/NEP + F1/accuracy), fichas por equipo con su matriz de confusión y un gráfico de barras del **F1 por equipo** (1.0 = desagregación perfecta).
-
 ### 5. Benchmark de Algoritmos y Estabilidad de Umbrales (MEJORAS #9 y #10)
 Pestaña **🏁 Benchmark**: re-ejecuta automáticamente el análisis (`/api/analyze`) con 6 configuraciones y compara las métricas de validación del PASO 3:
 
 - **Comparativa de algoritmos**: K-Means, GMM, DBSCAN y FHMM (K-Means + FHMM activo) con los umbrales nominales de la sesión.
 - **Estabilidad ±20%**: K-Means con `current_threshold`/`power_threshold` al −20% y +20%; se reporta F1 medio ± desviación típica y RE medio ± std (un CV alto = desagregación frágil frente al ajuste manual de umbrales).
 - **Salidas**: tabla ordenada por F1 (MAE, RMSE, RE %, F1, accuracy, nº de eventos y tiempo de ejecución por configuración), gráfico de barras del F1 y resumen con la mejor configuración y el coeficiente de variación del F1. Todo se mide en el cliente (`performance.now()`) sin cambios en el backend.
+
+### 6. Firmas Extendidas por Equipo (MEJORA #20)
+Además de la firma armónica (ΔH3/ΔH5/ΔH7), cada evento incorpora tres rasgos nuevos que entran **dentro del vector de features del clustering** (junto a `|ΔP|, |ΔI|, THD, |ΔQ|, |ΔH3|, |ΔH5|, |ΔH7|`) y se exponen en la tabla de equipos y en las fichas técnicas:
+
+- **cos φ medio y Δcos φ transitorio** (`cos(φ) L1..L3`): un motor de arranque directo arranca con cos φ ≈ 0.3–0.5 y sube al cargar; una resistencia mantiene cos φ ≈ 1; un variador mantiene cos φ alto con PF penalizado por el THD.
+- **Ratio de inrush** (`|ΔI| / I_previa`, con `log1p` para compactar la cola): DOL ≈ 5–8×, VFD ≈ 1–1.5×, resistivo ≈ 1×.
+- **Concentración de fase** (`max(|ΔI fase|) / Σ|ΔI fase|`): ≈ 1/3 = trifásico equilibrado, ≈ 1 = carga monofásica → la ficha indica *Monofásico (1 fase)*, *Asimétrico (2 fases)* o *Trifásico equilibrado*.
+
+Reglas añadidas a `_classify_load_class`: `inrush ≥ 4×` con I ≥ 5 A → **Motor Inductivo (Arranque DOL)**; `inrush ≤ 1.6×` con cos φ ≥ 0.97 y P ≥ 1 kW → **Carga Resistiva**. El post-nombrado heurístico también aprovecha el inrush (`Motor DOL / Compresor (inrush ×N)`).
+Salidas: `machine_statistics[].avg_cosphi / avg_inrush / phase_type`, `harmonic_signatures[]` y las columnas **Inrush ×**, **cos φ** y **Fases** de la tabla de equipos.
+
+### 7. Diagnóstico de Calidad Energética (MEJORA #21)
+Pestaña **🔎 Calidad Energética** (endpoint `GET /api/powerquality?dataset_id=…&max_points=600`, implementado en `DataManager.get_power_quality`):
+
+- **Checks de cumplimiento** con semáforo ok/warn/bad: tensión ±10 %, desequilibrio de tensión (U2/U1 si el analizador lo exporta, o `(max−min)/media`; límite EN 50160 < 2 %), THD de tensión (< 8 % en LV), THD de corriente (informativo), corriente de neutro (< 50 % de la fase), K-factor (IEEE C57.110 < 4), frecuencia (50 Hz ± 0.5) y sags/swells.
+- **Gráficos**: tensión por fase (U L1/L2/L3 frente al nominal detectado), THD de tensión + desequilibrio en eje % y corriente de neutro vs. fases (armónicos triplen de cargas monofásicas).
+- **Tabla de eventos de tensión**: agrupa muestras contiguas con U < 90 % (sag) o > 110 % (swell) del nominal, con duración en minutos, tensión extrema, profundidad (%) y fase más afectada.
+- Limitación explícita: el analizador exporta **medias**, por lo que se detectan depresiones sostenidas, no sags de medio ciclo.
+
+## 📈 Roadmap de Análisis por Magnitud (catálogo 2026-09-21)
+
+Catálogo de análisis posibles que aprovechan columnas ya presentes en los exports del analizador de redes. Lo marcado como **[HECHO]** ya está implementado en la plataforma.
+
+### 1. Tensión (U) — columnas: U L1/L2/L3, U L12/L23/L31, U0/U1, U2/U1, CF U
+- **[HECHO]** Detección de sags/swells sostenidos: U < 90 % o > 110 % del nominal con duración, correlacionada con tus eventos ΔI/ΔP ya detectados → identifica qué equipo provoca la caída de tensión al arrancar (carga DOL grande). ⚠️ Limitación honesta: el PQM exporta medias, no formas de onda, así que se capturan depresiones sostenidas, no sags de medio ciclo.
+- **[HECHO]** Desequilibrio de tensión (U2/U1 %): límite IEC 2 %; correlación con el reparto de corrientes → recomendación concreta de rebalanceo de cargas monofásicas.
+- Sag de red vs. caída interna: si U cae sin salto de carga → problema externo de red; si cae junto a ΔI > 0 → arranque interno (separación automática de causas). *(pendiente)*
+- CF de tensión anómalo → detección de notching/clipping en el bus. *(pendiente)*
+
+### 2. Variación de corriente (I) — columnas: I *L1/L2/L3, I *N, I0/I1, I2/I1, CF I
+- **[HECHO]** Ratio de inrush (ΔI / I previa por evento): DOL ≈5–8×, VFD ≈1–1.5×, resistivo ≈1× → entra al vector de features del clustering y a `_classify_load_class` (MEJORA #20). Nota metodológica: con medias de 10 s el pico real de un DOL se subestima (el transitorio dura < 2 s), así que el ratio se mide como ΔI sostenido frente a la corriente previa, no como I_pico/I_estable.
+- **[HECHO]** Monofásico vs. trifásico: un salto de I en una sola fase = carga monofásica; en las 3 = trifásica → nuevo rasgo `phase_concentration` para el clustering y campo `phase_type` en las fichas de equipo (MEJORA #20).
+- **[HECHO]** Neutro: I *N + confirmación de riesgo por triplen en el check de calidad (I *N > 50 % de la fase → `warn`; en este registro 16.4 A = 54 % de la fase) (MEJORA #21).
+- I2/I1 (secuencia negativa) → desbalance de consumo. *(pendiente)*
+### 3. Potencia (P, Q, S) — columnas: P Lx, Q1 Lx, S Lx, Sn Lx
+- **[HECHO]** Desagregación bidimensional P+Q con el FHMM (hmmlearn): observación [P, Q] en vez de solo P → separa calentador de motor con idéntica P (MEJORA #1).
+- Potencia de distorsión D = √(S² − P² − Q1²): el "kVA fantasma" que penalizan las tarifas; estimable por equipo vía ΔD en cada evento. *(pendiente)*
+- Benchmark NILMTK real: convertir el DataFrame a HDF5 de NILMTK y correr CombinatorialOptimisation + FHMM oficiales + nilmtk.metrics → añadir "nilmtk-CO" como algoritmo extra en la pestaña 🏁 Benchmark. *(pendiente)*
+- Curva de duración de carga y análisis de picos (dimensionamiento de contrato de capacidad). *(pendiente)*
+
+### 4. Variación de cos φ — columnas: cos(φ) Lx, PF Lx, tg(φ)L+/C−/L−/C+
+- **[HECHO]** Firma Δcos(φ) por evento: motor DOL arranca con cos φ≈0.3–0.5 y sube; VFD mantiene cos φ alto con PF bajo; una resistencia tiene PF = cos φ = 1 → `abs_delta_cosphi` entra al vector de features y `avg_cosphi` se expone por equipo y en las fichas (MEJORA #20). ⚠️ El analizador exporta `cos(φ) Lx` **con signo** (este registro trae L1/L2 negativas, consumo en cuadrante de exportación), por lo que el cos φ útil es el valor absoluto; si además existe `cos(φ) Σ`, promediarla con las fases distorsiona la firma.
+- PF − cos(φ) = penalización armónica: PF incluye distorsión, cos(φ) solo desplazamiento → separa "reactiva clásica" de "reactiva por distorsión" por equipo. *(pendiente como indicador propio; ambas columnas ya están disponibles)*
+- Detección de banco de condensadores: evento con ΔQ < 0 sin ΔP (vía tg(φ)C−) → auditar si la corrección del factor de potencia está bien graduada o hay sobrecompensación (reactiva exportada = dinero perdido). *(pendiente)*
+### 5. Variación de distorsión — columnas: THD U Lx, THD I Lx/N, U/I H 1–50, K Lx
+- **[HECHO]** K-factor (K Lx): derating de transformador por armónicos (IEEE C57.110) → "¿tu transformador soporta la carga actual?" (MEJORA #21). Se evalúa **solo sobre muestras con carga** (I ≥ 30 % del pico) y excluyendo la columna K del neutro: sin ese filtro el registro daba K máx = 327 (media 38) por artefactos en vacío; acotado a carga, la media es 3.8 y el máximo 22.
+- **[HECHO]** THD U vs THD I: la pestaña de calidad muestra juntos el THD U del bus y el THD I de las fases con carga → distingue quién contamina el bus de quién solo padece la distorsión (MEJORA #21). El THD I se reporta con el mismo filtro de carga (IEEE 519 lo evalúa a carga nominal): pasa de 49.4 % a un valor de carga representativo.
+- **[HECHO]** Frecuencia (f L1): desvío P95 frente a 50 Hz ± 0.5 (EN 50160) para etiquetar eventos externos de red (MEJORA #21).
+- Vector espectral completo H1–H50 (hoy el resumen usa H1–H25): clasificación por distancia espectral → VFD (H5/H7/H11/H13), electrónica de IT (H3/H5), iluminación LED (H3); usar coseno de similitud lo hace discriminativo. *(pendiente — las columnas H1–H50 ya están en el dataset)*
+- THD I % vs % de carga: si el THD I crece a carga parcial → electrónica con filtro mal dimensionado. *(pendiente)*
+
+### Roadmap priorizado (valor/esfuerzo)
+1. **[HECHO]** Pestaña "Calidad de Energía" (`/api/powerquality`): sags, desequilibrio, THD U/I, neutro, K-factor — 100 % cálculo con columnas ya presentes, sin dependencias nuevas (MEJORA #21).
+2. **[HECHO]** Firmas extendidas en el clustering: Δcos(φ), ratio de inrush y balance de fases en la matriz de features → sube el F1 de la desagregación con lo que ya existe (MEJORA #20).
+3. **[HECHO]** FHMM bidimensional P+Q — mejora la separación de equipos con la misma P (MEJORA #1).
+4. Sag de red vs. caída interna, banco de condensadores y curva de duración de carga: los tres siguen siendo cálculo puro sobre columnas existentes.
+5. Instalar NILMTK y añadir CO/FHMM-oficial + métricas `nilmtk.metrics` al Benchmark — es el único punto que requiere instalar dependencia (con riesgo de fricción con pandas 3.x; el motor propio seguiría siendo el principal).
+
+---
+
+## 🔎 Criterio de Cumplimiento del Informe de Calidad (MEJORA #21)
+
+El registro del analizador de redes tiene una **carga de fondo muy variable**, de modo que evaluar los límites normativos con el máximo absoluto produce falsas alarmas. `get_power_quality` devuelve, junto a cada check, el percentil 95 de la magnitud y el método aplicado (campo `method`):
+
+| Magnitud | Criterio | Por qué |
+|---|---|---|
+| Tensión (±10 %), desequilibrio, THD U, frecuencia | **Percentil 95** (EN 50160 exige que el 95 % de las muestras de 10 min cumplan) | El máximo puntual (12.1 % de desvío en un solo instante) no implica incumplimiento |
+| THD I, K-factor | Solo **muestras con carga** (I ≥ 30 % del pico), sin la columna del neutro | IEEE 519 / C57.110 se evalúan a carga nominal; en vacío K y THD I se disparan sin significado operativo |
+| Neutro | Máximo frente al 50 % de la corriente de fase | El pico del neutro es el riesgo real (sobrecarga por triplen) |
+| Sags/swells | Eventos agrupados de muestras contiguas fuera de ±10 % | Coherente con la detección de arranques DOL |
+
+Diagnóstico del registro real: **cumple** tensión, desequilibrio, THD U y frecuencia; **atención** en neutro (54 % de la fase) y 5 eventos de sag; **alerta** en K-factor (P95 11.1 frente al límite 4) y THD I → hay electrónica de potencia contaminando el bus y el transformador opera con derating por armónicos.

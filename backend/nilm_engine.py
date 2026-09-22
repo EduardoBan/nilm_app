@@ -35,17 +35,29 @@ class NILMEngine:
 
     @staticmethod
     def _classify_load_class(avg_p: float, avg_i: float, avg_thd: float,
-                             harm_ratio_pct: float, harm_sum: float) -> str:
+                             harm_ratio_pct: float, harm_sum: float,
+                             avg_cosphi: float = 0.0,
+                             avg_inrush: float = 1.0) -> str:
         """
         PASO 1: clasifica la familia de carga combinando la firma armonica
         transitoria (ΔH/ΔI) con la firma de potencia. Un ratio armonico alto
         con ΔP modesto identifica electronica de potencia (VFD/Rectificador);
         un ΔP/ΔQ alto con ΔH bajo identifica un motor de arranque directo.
+        MEJORA #20: el amortiguamiento del transitorio (pico de arranque o
+        valle de parada respecto al nivel estable) y el |cos(phi)| medio
+        refuerzan las reglas: transitorio >= 2x -> arranque DOL de motor;
+        transitorio ~1x con |cos(phi)| >= 0.95 -> carga resistiva pura.
+        (Con medias de 10 s el inrush electrico no es observable: este rasgo
+        mide la sobre-oscilacion del arranque, no el pico de medio ciclo.)
         """
         if harm_ratio_pct >= 35.0 and harm_sum > 0.3:
             return "Electronica de Potencia (VFD/Rectificador)"
         if avg_thd >= 35.0:
             return "Electronica de Potencia (VFD/Rectificador)"
+        if avg_inrush >= 2.0 and avg_i >= 5.0:
+            return "Motor Inductivo (Arranque DOL)"
+        if avg_inrush <= 1.15 and avg_cosphi >= 0.95 and avg_p >= 1.0:
+            return "Carga Resistiva (Calentador)"
         if avg_i >= 20.0 and avg_p >= 15.0:
             return "Motor Inductivo (Arranque DOL)"
         if avg_p >= 5.0:
@@ -163,6 +175,68 @@ class NILMEngine:
         df_work['delta_I'] = df_work['I_total'].diff().fillna(0)
         df_work['delta_H'] = df_work['H_total'].diff().fillna(0)
         df_work['delta_THD'] = df_work['THD_avg'].diff().fillna(0)
+
+        # --- MEJORA #20: firmas extendidas por evento -------------------
+        # (a) cos(phi) medio de las FASES en valor absoluto y su salto
+        #     transitorio Δcos(phi): un motor DOL arranca con |cos| bajo y
+        #     sube al cargar; una resistencia mantiene |cos| ≈ 1; un VFD
+        #     mantiene |cos| alto con PF penalizado por THD.
+        #     Se excluye la columna Σ (mezcla signos de las tres fases) y se
+        #     toma valor absoluto: en este analizador L1/L2 salen negativas
+        #     por convencion de cuadrante, y promediar con signo daba -0.23
+        #     (inutil); |cos| por fase da 0.67 y si es comparable con 1.
+        cosphi_cols = [c for c in df_work.columns
+                       if c.startswith('cos(') and 'media [---]' in c
+                       and any(f' {ph} ' in c for ph in ('L1', 'L2', 'L3'))]
+        if cosphi_cols:
+            df_work['cosphi_avg'] = df_work[cosphi_cols].abs().mean(axis=1)
+        elif 'PF_avg' in df_work:
+            df_work['cosphi_avg'] = df_work['PF_avg'].abs()
+        else:
+            df_work['cosphi_avg'] = 0.92
+        df_work['delta_cosphi'] = df_work['cosphi_avg'].diff().fillna(0)
+
+        # (b) amortiguamiento del transitorio (antes "inrush"): con medias de
+        #     10 s el inrush electrico (ms) es invisible en el export, pero SI
+        #     se mide el pico de arranque / valle de parada respecto al nivel
+        #     estable siguiente:
+        #       ON  -> max(I[k:k+6]) / mediana(I[k+7:k+12])
+        #       OFF -> mediana(I[k-3:k]) / min(I[k:k+6])
+        #     Sobre el registro real: mediana 1.11 (ON) / 1.27 (OFF) y cola
+        #     hasta 5-10x, por lo que discrimina arranques con sobre-oscilacion
+        #     (DOL, compresor) de arranques suaves. Sustituye a |ΔI|/I_previa,
+        #     que con carga de fondo en el bus daba 0.15 de mediana y nunca
+        #     disparaba la regla de arranque directo (metrica muerta).
+        i_series = df_work['I_total']
+        i_pre_med = i_series.shift(1).rolling(3, min_periods=1).median()
+        fwd_block = pd.concat([i_series.shift(-k) for k in range(6)], axis=1)
+        i_settled = pd.concat(
+            [i_series.shift(-k) for k in range(7, 12)], axis=1
+        ).median(axis=1)
+        over_on = fwd_block.max(axis=1) / i_settled.clip(lower=0.5)
+        over_off = i_pre_med / fwd_block.min(axis=1).clip(lower=0.5)
+        df_work['inrush_ratio'] = pd.Series(
+            np.where(df_work['delta_I'].values >= 0,
+                     over_on.fillna(1.0).values, over_off.fillna(1.0).values),
+            index=df_work.index
+        ).clip(lower=0.2, upper=20.0).fillna(1.0)
+
+        # (c) concentracion de fase: max(|ΔI fase|)/sum(|ΔI fase|).
+        #     ~1/3 trifasico equilibrado; ~1 monofasico (una sola fase).
+        #     Calibrado sobre el registro real: en eventos P50=0.37,
+        #     29% >= 0.80 (monofasico) y 2% entre 0.55 y 0.80 (asimetrico).
+        phase_i_cols = [c for c in ['I *L1 media [A]', 'I *L2 media [A]',
+                                    'I *L3 media [A]'] if c in df_work.columns]
+        if len(phase_i_cols) >= 2:
+            dphase = df_work[phase_i_cols].diff().abs().fillna(0)
+            dmax = dphase.max(axis=1)
+            dsum = dphase.sum(axis=1)
+            df_work['phase_concentration'] = np.where(
+                dsum > 0.01, (dmax / dsum).clip(0.0, 1.0), 1.0 / 3.0
+            )
+        else:
+            df_work['phase_concentration'] = 1.0 / 3.0
+
         
         # Detect turn-on events (positive transitions)
         mask_on = (df_work['delta_I'] >= current_threshold) | (df_work['delta_P'] >= power_threshold)
@@ -237,8 +311,22 @@ class NILMEngine:
             events[f'abs_delta_H{h_order}'] = (
                 events[h_col].abs() if h_col in events else 0.0
             )
+        # MEJORA #20: firmas extendidas en el vector de features —
+        # Δcos(phi) transitorio (motor/resistencia/VFD), amortiguamiento del
+        # arranque (pico/regimen, log1p para compactar su cola) y
+        # concentracion de fase (~1/3 trifasico, ~1 monofasico).
+        events['abs_delta_cosphi'] = (
+            events['delta_cosphi'].abs() if 'delta_cosphi' in events else 0.0
+        )
+        events['feat_inrush'] = np.log1p(
+            (events['inrush_ratio'] - 1.0).clip(lower=0.0)
+            if 'inrush_ratio' in events else 0.0
+        )
+        if 'phase_concentration' not in events:
+            events['phase_concentration'] = 1.0 / 3.0
         features = ['abs_delta_P', 'abs_delta_I', 'THD_avg', 'abs_delta_Q',
-                    'abs_delta_H3', 'abs_delta_H5', 'abs_delta_H7']
+                    'abs_delta_H3', 'abs_delta_H5', 'abs_delta_H7',
+                    'abs_delta_cosphi', 'feat_inrush', 'phase_concentration']
         X = events[features].fillna(0).values
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
@@ -303,8 +391,26 @@ class NILMEngine:
             avg_dh7 = float(sub['delta_H7'].abs().mean()) if 'delta_H7' in sub else 0.0
             avg_harm_ratio = float(sub['harm_ratio_pct'].mean()) if 'harm_ratio_pct' in sub else 0.0
             harm_sum = avg_dh3 + avg_dh5 + avg_dh7
+
+            # MEJORA #20: firmas extendidas promediadas por cluster —
+            # cos(phi) medio, ratio de inrush y tipo de fase (mono/asimétrico/
+            # trifásico equilibrado) según la concentración de ΔI por fase.
+            avg_cosphi = float(sub['cosphi_avg'].mean()) if 'cosphi_avg' in sub else 0.0
+            avg_inrush = float(sub['inrush_ratio'].mean()) if 'inrush_ratio' in sub else 1.0
+            avg_phase_conc = (
+                float(sub['phase_concentration'].mean())
+                if 'phase_concentration' in sub else 1.0 / 3.0
+            )
+            if avg_phase_conc >= 0.80:
+                phase_type = "Monofásico (1 fase)"
+            elif avg_phase_conc >= 0.55:
+                phase_type = "Asimétrico (2 fases)"
+            else:
+                phase_type = "Trifásico equilibrado"
+
             load_class = self._classify_load_class(
-                avg_p, avg_i, avg_thd, avg_harm_ratio, harm_sum
+                avg_p, avg_i, avg_thd, avg_harm_ratio, harm_sum,
+                avg_cosphi=avg_cosphi, avg_inrush=avg_inrush
             )
 
             # Check Ground-Truth manual label override
@@ -324,6 +430,10 @@ class NILMEngine:
                 if avg_harm_ratio >= 40.0 and harm_sum > 0.5 and avg_p < 25.0:
                     name = f"Variador / Rectificador (ΔH {harm_sum:.1f} A)"
                     category = "Variador de Frecuencia"
+                elif avg_inrush >= 2.0 and avg_p >= 3.0:
+                    # MEJORA #20: transitorio >= 2x identifica arranque DOL
+                    name = f"Motor DOL / Compresor (arranque ×{avg_inrush:.1f})"
+                    category = "Compresor / Gran Potencia"
                 elif avg_p >= 25.0 or avg_i >= 40.0:
                     name = f"Compresor / Motor Principal ({avg_p:.1f} kW)"
                     category = "Compresor / Gran Potencia"
@@ -352,6 +462,9 @@ class NILMEngine:
                 "avg_delta_h5": round(avg_dh5, 3),
                 "avg_delta_h7": round(avg_dh7, 3),
                 "harm_ratio_pct": round(avg_harm_ratio, 1),
+                "avg_cosphi": round(avg_cosphi, 3),
+                "avg_inrush": round(avg_inrush, 2),
+                "phase_type": phase_type,
                 "load_class": load_class,
                 "count": len(sub),
                 "on_count": int((sub['event_type'] == 'ON').sum()),
@@ -558,6 +671,9 @@ class NILMEngine:
                 "avg_delta_h5": round(info.get('avg_delta_h5', 0.0), 3),
                 "avg_delta_h7": round(info.get('avg_delta_h7', 0.0), 3),
                 "harm_ratio_pct": round(info.get('harm_ratio_pct', 0.0), 1),
+                "avg_cosphi": round(float(info.get('avg_cosphi', 0.0)), 3),
+                "avg_inrush": round(float(info.get('avg_inrush', 1.0)), 2),
+                "phase_type": info.get('phase_type', 'Trifásico equilibrado'),
                 "load_class": info.get('load_class', 'Desconocido')
             })
 
@@ -772,20 +888,19 @@ class NILMEngine:
         delta_i = info['avg_delta_i']
         avg_thd = info['avg_thd']
         avg_p = info['avg_delta_p']
-        
-        if avg_thd >= 35.0 or info.get('harm_ratio_pct', 0) > 5:
-            load_class = info.get('load_class') or self._classify_load_class(
-                avg_p, delta_i, avg_thd,
-                float(info.get('harm_ratio_pct', 0.0)),
-                float(info.get('avg_delta_h3', 0.0)) + float(info.get('avg_delta_h5', 0.0))
-                + float(info.get('avg_delta_h7', 0.0))
-            )
-        elif delta_i >= 20.0 and avg_p >= 15.0:
-            load_class = "Motor Inductivo (Arranque DOL)"
-        elif avg_p >= 5.0:
-            load_class = "Motor / Carga Mixta"
-        else:
-            load_class = "Carga Resistiva"
+
+        # El load_class ya se calculo en cluster_appliances con la firma
+        # extendida (MEJORA #20). Solo se recalcula si falta, pasando TODOS
+        # los rasgos: sin cos(phi) ni el amortiguamiento del arranque se
+        # perderian las reglas de arranque DOL y de carga resistiva.
+        load_class = info.get('load_class') or self._classify_load_class(
+            avg_p, delta_i, avg_thd,
+            float(info.get('harm_ratio_pct', 0.0)),
+            float(info.get('avg_delta_h3', 0.0)) + float(info.get('avg_delta_h5', 0.0))
+            + float(info.get('avg_delta_h7', 0.0)),
+            avg_cosphi=float(info.get('avg_cosphi', 0.0)),
+            avg_inrush=float(info.get('avg_inrush', 1.0))
+        )
         
         machine_stats.append({
             "id": c, "name": info['name'], "category": info['category'],
@@ -801,6 +916,9 @@ class NILMEngine:
             "avg_delta_h5": round(info.get('avg_delta_h5', 0.0), 3),
             "avg_delta_h7": round(info.get('avg_delta_h7', 0.0), 3),
             "harm_ratio_pct": round(info.get('harm_ratio_pct', 0.0), 1),
+            "avg_cosphi": round(float(info.get('avg_cosphi', 0.0)), 3),
+            "avg_inrush": round(float(info.get('avg_inrush', 1.0)), 2),
+            "phase_type": info.get('phase_type', 'Trifásico equilibrado'),
             "custom_label": bool(info.get('custom_label', False))
         })
 
@@ -1030,6 +1148,7 @@ class NILMEngine:
                 # no soporta matrices de transicion por paso temporal).
                 log_T_by_hour = [np.log(m + 1e-300) for m in trans_by_hour]
 
+
                 def _viterbi_time(o_ll: np.ndarray) -> Tuple[np.ndarray, float]:
                     t_len, n_n = o_ll.shape
                     delta = np.full(n_n, np.log(1.0 / n_n)) + o_ll[0]
@@ -1062,6 +1181,122 @@ class NILMEngine:
                 print(f"Priors horarios no aplicables: {exc}")
 
         return result
+
+    # ------------------------------------------------------------------
+    # MEJORA #13: informe de fugas / standby a partir del residuo.
+    # El baseline tras desagregar cuantifica el consumo fantasma: kW
+    # minimos nocturnos x tarifa = ahorro potencial anual. Analisis de
+    # negocio directo sin dependencias nuevas (numpy/pandas).
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _standby_report(df_work, p_total, baseline_curve):
+        """Cuantifica el consumo fantasma (residuo no atribuido).
+
+        Devuelve KPIs JSON-safe: percentiles globales y nocturnos
+        (ventana 00:00-05:00), cuota sobre el total, energia del periodo
+        y proyeccion anual, curva de duracion de carga (decimada a 200
+        puntos) e histograma (40 bines). Dict vacio si <10 muestras.
+        """
+        try:
+            n = int(len(p_total))
+            if n < 10 or len(baseline_curve) != n:
+                return {}
+            base = np.clip(np.nan_to_num(np.asarray(baseline_curve, dtype=float),
+                                         nan=0.0, posinf=0.0, neginf=0.0), 0.0, None)
+            tot = np.clip(np.nan_to_num(np.asarray(p_total, dtype=float),
+                                        nan=0.0, posinf=0.0, neginf=0.0), 0.0, None)
+            if not np.any(np.isfinite(base)):
+                return {}
+
+            ts = pd.to_datetime(df_work['timestamp'], errors='coerce') \
+                if 'timestamp' in df_work.columns else None
+
+            def _pct(a, q):
+                try:
+                    return float(np.percentile(a, q))
+                except Exception:
+                    return 0.0
+
+            p = {'p5': _pct(base, 5), 'p10': _pct(base, 10),
+                 'p25': _pct(base, 25), 'p50': _pct(base, 50),
+                 'mean': float(np.mean(base)), 'max': float(np.max(base))}
+            night = {'p10': 0.0, 'p50': 0.0, 'mean': 0.0,
+                     'samples': 0, 'window': '00:00-05:00'}
+            try:
+                if ts is not None and ts.notna().any():
+                    hours = ts.dt.hour.to_numpy()
+                    mask = (hours >= 0) & (hours < 5)
+                    if int(np.sum(mask)) >= 3:
+                        nb = base[mask]
+                        night = {'p10': _pct(nb, 10), 'p50': _pct(nb, 50),
+                                 'mean': float(np.mean(nb)),
+                                 'samples': int(np.sum(mask)),
+                                 'window': '00:00-05:00'}
+            except Exception:
+                pass
+
+            mean_tot = float(np.mean(tot)) if n else 0.0
+            share = float(np.clip(p['mean'] / mean_tot, 0.0, 1.0)) \
+                if mean_tot > 0 else 0.0
+
+            # Energia del periodo por integracion trapezoidal (timestamps).
+            energy_kwh, hours_total = 0.0, 0.0
+            try:
+                if ts is not None and ts.notna().sum() >= 2:
+                    t = ts.dropna()
+                    dt_h = t.diff().dt.total_seconds().fillna(0).to_numpy() / 3600.0
+                    dt_h = np.clip(dt_h, 0, None)
+                    if len(dt_h) == n:
+                        energy_kwh = float(np.sum(base * dt_h))
+                        hours_total = float(np.sum(dt_h))
+            except Exception:
+                pass
+            if hours_total <= 0 and n >= 2:
+                try:
+                    t = pd.to_datetime(df_work['timestamp'],
+                                       errors='coerce').dropna()
+                    step_h = float(t.diff().dt.total_seconds().median() / 3600.0)
+                    if step_h > 0 and np.isfinite(step_h):
+                        hours_total = step_h * n
+                        energy_kwh = float(np.mean(base) * hours_total)
+                except Exception:
+                    pass
+            annual_kwh = float(energy_kwh / hours_total * 8760.0) \
+                if hours_total > 0 else 0.0
+
+            # Curva de duracion de carga (ordenada desc, decimada a 200 pts).
+            m = min(200, n)
+            idx = np.linspace(0, n - 1, m).astype(int)
+            dur_base = np.sort(base)[::-1][idx]
+            dur_tot = np.sort(tot)[::-1][idx]
+            pct_axis = np.arange(m) / max(1, m - 1) * 100.0
+
+            try:
+                counts, edges = np.histogram(base, bins=40)
+                hist = {'counts': [int(c) for c in counts],
+                        'edges': [round(float(e), 3) for e in edges]}
+            except Exception:
+                hist = {'counts': [], 'edges': []}
+
+            return {
+                'samples': n,
+                'hours_covered': round(hours_total, 2),
+                'baseline_kw': {k: round(float(v), 3) for k, v in p.items()},
+                'night_kw': {k: (round(float(v), 3)
+                                 if isinstance(v, (int, float)) else v)
+                             for k, v in night.items()},
+                'share_pct': round(share * 100.0, 2),
+                'energy_kwh': round(energy_kwh, 3),
+                'annual_kwh': round(annual_kwh, 1),
+                'duration_pct': [round(float(v), 2) for v in pct_axis],
+                'duration_baseline_kw': [round(float(v), 3) for v in dur_base],
+                'duration_total_kw': [round(float(v), 3) for v in dur_tot],
+                'hist': hist,
+                'method': 'Residuo tras desagregacion (P_total - S maquinas); '
+                          'noche 00:00-05:00; proyeccion anual = media x 8760 h.',
+            }
+        except Exception:
+            return {}
 
     def _validate_reconstruction_error(self, df_work, disagg_power, baseline_curve) -> Dict[str, Any]:
         """PASO 3: error de reconstruccion global (MAE/RMSE/MAPE) y porcentaje
@@ -1328,10 +1563,20 @@ class NILMEngine:
                 "harm_ratio_pct": float(cluster_info[c].get('harm_ratio_pct', 0.0)),
                 "avg_thd": float(cluster_info[c].get('avg_thd', 0.0)),
                 "avg_delta_p": float(cluster_info[c].get('avg_delta_p', 0.0)),
+                "avg_cosphi": round(float(cluster_info[c].get('avg_cosphi', 0.0)), 3),
+                "avg_inrush": round(float(cluster_info[c].get('avg_inrush', 1.0)), 2),
+                "phase_type": str(cluster_info[c].get('phase_type', '')),
+                "load_class": str(cluster_info[c].get('load_class', '')),
                 "count": int(cluster_info[c].get('count', 0))
             }
             for c in sorted(cluster_info.keys())
         ]
+
+        # MEJORA #13: informe de fugas / standby a partir del residuo
+        # (baseline tras desagregar). Sin dependencias nuevas.
+        p_full = df_work['P_total'].to_numpy(dtype=float) \
+            if 'P_total' in df_work.columns else np.zeros(n)
+        standby = self._standby_report(df_work, p_full, baseline_curve)
 
         return {
             "dataset_id": dataset_id,
@@ -1354,6 +1599,7 @@ class NILMEngine:
             "hmmlearn_available": hmmlearn_available,
             "fhmm_exact": fhmm_exact,
             "validation": validation,
+            "standby": standby,
             "fhmm_enabled": use_fhmm,
             "multi_state_models": {
                 str(c): {

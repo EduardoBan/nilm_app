@@ -140,9 +140,11 @@
       <button class="nav-tab" data-tab="features2d">🔬 Espacios de Características</button>
       <button class="nav-tab" data-tab="hourly">📊 Distribución Horaria 24h</button>
       <button class="nav-tab" data-tab="quality">⚡ Calidad de Red y Armónicos</button>
+      <button class="nav-tab" data-tab="pq">🔎 Calidad Energética</button>
       <button class="nav-tab" data-tab="harmonic">🎸 Harmonic Signature</button>
       <button class="nav-tab" data-tab="fhmm">🧠 FHMM-Viterbi</button>
 <button class="nav-tab" data-tab="validation">✅ Validación</button>
+      <button class="nav-tab" data-tab="standby">🌙 Fugas / Standby</button>
       <button class="nav-tab" data-tab="benchmark">🏁 Benchmark</button>
     </nav>
 
@@ -194,7 +196,10 @@
                 <th>Tipo de Carga (Armónicos)</th>
                 <th>Potencia Estimada</th>
                 <th>Salto Corriente (ΔI)</th>
+                <th>Inrush ×</th>
                 <th>THD Armónico</th>
+                <th>cos φ</th>
+                <th>Fases</th>
                 <th>N° Arranques</th>
                 <th>Tiempo de Uso</th>
                 <th>Consumo (kWh)</th>
@@ -203,7 +208,7 @@
               </tr>
             </thead>
             <tbody id="appliances-table-body">
-              <tr><td colspan="11" style="text-align:center; padding: 20px;">Cargando análisis NILM...</td></tr>
+              <tr><td colspan="14" style="text-align:center; padding: 20px;">Cargando análisis NILM...</td></tr>
             </tbody>
           </table>
         </div>
@@ -433,6 +438,46 @@
       </div>
     </section>
 
+    <!-- Tab: Fugas / Standby (MEJORA #13) — consumo fantasma del residuo -->
+    <section id="tab-standby" class="tab-content">
+      <div class="stack-grid">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">🌙 Fugas y Consumo Standby</h2>
+              <p class="card-subtitle">Residuo no atribuido tras desagregar (P_total − Σ equipos): mínimos nocturnos × tarifa = ahorro potencial anual</p>
+            </div>
+          </div>
+          <div id="standby-kpis" class="validation-grid"><div class="empty-state"><p>Ejecuta el análisis NILM para cuantificar el consumo fantasma.</p></div></div>
+          <div id="standby-method" class="card-subtitle" style="margin-top:8px;"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">📉 Curva de duración de carga</h2>
+              <p class="card-subtitle">Potencia superada el X% del tiempo — el P5 del standby es tu fuga base permanente</p>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="chart-standby-duration"></canvas>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">📊 Distribución del standby</h2>
+              <p class="card-subtitle">Histograma del residuo (kW): un pico estrecho = carga fantasma constante (fácil de atacar)</p>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="chart-standby-hist"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- Tab: Benchmark de algoritmos + estabilidad de umbrales (MEJORA #9/#10) -->
     <section id="tab-benchmark" class="tab-content">
       <div class="stack-grid">
@@ -463,6 +508,70 @@
       </div>
     </section>
 
+    <!-- Tab: Calidad Energética (MEJORA #21): tension, desequilibrio,
+         neutro, K-factor, THD U/I y sags/swells vs EN 50160 / IEEE -->
+    <section id="tab-pq" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">🔎 Diagnóstico de Calidad Energética</h2>
+            <p class="card-subtitle">Tensión por fase, desequilibrio, corriente de neutro, K-factor, THD U/I y eventos de sag/swell — verificación contra límites EN 50160 / IEC 61000 / IEEE C57.110</p>
+          </div>
+        </div>
+        <div id="pq-checks" class="validation-grid"><div class="empty-state"><p>Selecciona una medición para calcular el diagnóstico.</p></div></div>
+      </div>
+
+      <div class="two-col-grid">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">⚡ Tensión por fase</h2>
+              <p class="card-subtitle">Evolución de U L1/L2/L3 — el sag de un arranque grande aparece como caída simultánea en las tres fases</p>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="chart-pq-voltage"></canvas>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">📉 THD de tensión y desequilibrio</h2>
+              <p class="card-subtitle">THD U (%) y desequilibrio U2/U1 (%) — subidas de THD U tras un arranque = contaminación armónica del bus</p>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="chart-pq-thdu"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="two-col-grid">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">🧲 Corriente de neutro vs fases</h2>
+              <p class="card-subtitle">I N alto (armónicos triplen de cargas monofásicas) frente a las corrientes de fase — riesgo de sobrecarga del conductor neutro</p>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="chart-pq-neutral"></canvas>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">⚠️ Eventos de Tensión (Sags / Swells)</h2>
+              <p class="card-subtitle">Períodos sostenidos con U &lt; 90% (sag) o U &gt; 110% (swell) del nominal</p>
+            </div>
+          </div>
+          <div id="pq-events-table"></div>
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <!-- Footer -->
@@ -480,6 +589,6 @@
   <div id="toast" class="toast"></div>
 
   <!-- Compiled TypeScript Application Bundle -->
-  <script src="dist/bundle.js?v=fix3d-20260918-benchmark2"></script>
+  <script src="dist/bundle.js?v=mejora13-20260922"></script>
 </body>
 </html>

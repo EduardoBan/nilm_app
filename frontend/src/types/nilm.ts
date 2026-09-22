@@ -79,6 +79,10 @@ export interface MachineStat {
   avg_delta_h5?: number;
   avg_delta_h7?: number;
   harm_ratio_pct?: number;
+  /* MEJORA #20: firmas extendidas (inrush / cos φ / balance de fases) */
+  avg_cosphi?: number;
+  avg_inrush?: number;
+  phase_type?: string;
 }
 
 export interface MachineStateInfo {
@@ -149,6 +153,11 @@ export interface HarmonicSignature {
   harm_ratio_pct: number;
   avg_thd: number;
   avg_delta_p: number;
+  /* MEJORA #20: firmas extendidas (inrush / cos φ / balance de fases) */
+  avg_cosphi?: number;
+  avg_inrush?: number;
+  phase_type?: string;
+  load_class?: string;
   count: number;
 }
 
@@ -197,6 +206,22 @@ export interface ConfusionCounts {
   fp: number;
   fn: number;
   tn: number;
+}
+
+/* MEJORA #13: fugas / standby a partir del residuo (baseline) */
+export interface StandbyReport {
+  samples: number;
+  hours_covered: number;
+  baseline_kw: { p5: number; p10: number; p25: number; p50: number; mean: number; max: number };
+  night_kw: { p10: number; p50: number; mean: number; samples: number; window: string };
+  share_pct: number;
+  energy_kwh: number;
+  annual_kwh: number;
+  duration_pct: number[];
+  duration_baseline_kw: number[];
+  duration_total_kw: number[];
+  hist: { counts: number[]; edges: number[] };
+  method: string;
 }
 
 export interface ConfusionGlobal extends ConfusionCounts {
@@ -252,6 +277,8 @@ export interface NILMAnalysisResult {
   fhmm_exact?: FhmmExactInfo | null;
   /* PASO 3: validación de la desagregación */
   validation?: ValidationReport | null;
+  /* MEJORA #13: fugas / standby a partir del residuo (baseline) */
+  standby?: StandbyReport | null;
   /* Opción A: modelado multi-estado FHMM */
   fhmm_enabled?: boolean;
   max_states?: number;
@@ -298,4 +325,57 @@ export interface BenchmarkResult {
   best: BenchmarkRow | null;
 }
 
-export type ActiveTab = 'overview' | 'machines' | 'timeline' | 'features3d' | 'features2d' | 'hourly' | 'quality' | 'harmonic' | 'fhmm' | 'validation' | 'benchmark';
+export type ActiveTab = 'overview' | 'machines' | 'timeline' | 'features3d' | 'features2d' | 'hourly' | 'quality' | 'pq' | 'harmonic' | 'fhmm' | 'validation' | 'benchmark' | 'standby';
+
+/* MEJORA #21: diagnóstico de calidad energética */
+export interface PQCheck {
+  id: string;
+  label: string;
+  value: string;
+  limit: string;
+  status: 'ok' | 'warn' | 'bad';
+  note: string;
+}
+
+export interface PQEvent {
+  start: string;
+  end: string;
+  duration_min: number;
+  extreme_v: number;
+  depth_pct: number;
+  phase: string | null;
+}
+
+export interface PQPhaseStats {
+  mean: number;
+  min: number;
+  max: number;
+}
+
+export interface PowerQualityReport {
+  vnom: number;
+  samples: number;
+  voltage: { l1: PQPhaseStats; l2: PQPhaseStats; l3: PQPhaseStats };
+  unbalance: { mean: number; max: number; source: string };
+  thd_u: { mean: number; max: number };
+  thd_i: { mean: number; max: number };
+  neutral: { mean_a: number; max_a: number; pct_of_phase: number };
+  k_factor: { mean: number; max: number };
+  crest: { u: number; i: number };
+  frequency: { mean: number; min: number; max: number };
+  checks: PQCheck[];
+  sags: PQEvent[];
+  swells: PQEvent[];
+  timeseries: {
+    timestamps: string[];
+    v_l1: number[];
+    v_l2: number[];
+    v_l3: number[];
+    thd_u: number[];
+    i_n: number[];
+    u2u1: number[];
+    i_l1: number[];
+    i_l2: number[];
+    i_l3: number[];
+  };
+}

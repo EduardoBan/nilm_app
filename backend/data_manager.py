@@ -368,3 +368,309 @@ class DataManager:
             "voltage_harmonics_v": v_harmonics,
             "current_harmonics_a": i_harmonics
         }
+
+    # ------------------------------------------------------------------
+    # MEJORA #21: Diagnostico de Calidad Energetica
+    # Tension (±10%), desequilibrio (EN 50160), corriente de neutro,
+    # K-factor (IEEE C57.110), THD U/I y eventos de sag/swell.
+    # ------------------------------------------------------------------
+    def get_power_quality(self, dataset_id: str, max_points: int = 600):
+        df = self.load_dataset(dataset_id)
+        if 'timestamp' not in df.columns:
+            raise ValueError("El dataset no tiene columna timestamp")
+
+        df = df.sort_values('timestamp').reset_index(drop=True)
+
+        v_cols = [c for c in ['U L1 media [V]', 'U L2 media [V]', 'U L3 media [V]']
+                  if c in df.columns]
+        i_cols = [c for c in ['I *L1 media [A]', 'I *L2 media [A]', 'I *L3 media [A]']
+                  if c in df.columns]
+
+        # Tension nominal comercial mas cercana a la mediana medida
+        v_avg_phase = df[v_cols].mean(axis=1) if v_cols else pd.Series(230.0, index=df.index)
+        nominal_candidates = [230.0, 220.0, 240.0, 208.0, 277.0, 400.0, 415.0, 480.0]
+        vnom = float(min(nominal_candidates,
+                         key=lambda n: abs(n - float(np.median(v_avg_phase)))))
+
+        def _phase_stats(col: str) -> dict:
+            if col in df.columns:
+                s = pd.to_numeric(df[col], errors='coerce').dropna()
+                if len(s):
+                    return {"mean": round(float(s.mean()), 2),
+                            "min": round(float(s.min()), 2),
+                            "max": round(float(s.max()), 2)}
+            return {"mean": 0.0, "min": 0.0, "max": 0.0}
+
+        voltage_stats = {
+            "l1": _phase_stats('U L1 media [V]'),
+            "l2": _phase_stats('U L2 media [V]'),
+            "l3": _phase_stats('U L3 media [V]')
+        }
+
+        # Desvio de tension por muestra (todas las fases): EN 50160 evalua el
+        # 95% de las muestras, no el extremo absoluto. Un unico transitorio de
+        # sag no debe marcar el registro completo como incumplimiento, pero si
+        # debe verse en la nota (P95 + maximo + muestras fuera de +-10%).
+        if v_cols:
+            v_num = df[v_cols].apply(pd.to_numeric, errors='coerce')
+            v_dev_stack = ((v_num - vnom).abs() / vnom * 100.0).stack().dropna()
+            voltage_stats["p95_dev"] = round(float(v_dev_stack.quantile(0.95)), 2)
+            voltage_stats["max_dev"] = round(float(v_dev_stack.max()), 2)
+            voltage_stats["samples_out"] = int((v_dev_stack > 10.0).sum())
+        else:
+            voltage_stats["p95_dev"] = 0.0
+            voltage_stats["max_dev"] = 0.0
+            voltage_stats["samples_out"] = 0
+
+        # Desequilibrio de tension: U2/U1 (secuencia negativa) si el analizador
+        # lo exporta; si no, LVUR = (max-min)/media * 100
+        u2u1_col = next((c for c in df.columns if 'U2/U1' in c), None)
+        if u2u1_col:
+            unbalance_series = pd.to_numeric(df[u2u1_col], errors='coerce').dropna()
+            unbalance_source = "U2/U1 (secuencia negativa)"
+        elif v_cols:
+            v_mat = df[v_cols].apply(pd.to_numeric, errors='coerce')
+            v_mean_row = v_mat.mean(axis=1)
+            unbalance_series = ((v_mat.max(axis=1) - v_mat.min(axis=1)) / v_mean_row * 100.0).dropna()
+            unbalance_source = "calculado (max-min)/media"
+        else:
+            unbalance_series = pd.Series(dtype=float)
+            unbalance_source = "no disponible"
+        unbalance = {
+            "mean": round(float(unbalance_series.mean()), 3) if len(unbalance_series) else 0.0,
+            "p95": round(float(unbalance_series.quantile(0.95)), 3) if len(unbalance_series) else 0.0,
+            "max": round(float(unbalance_series.max()), 3) if len(unbalance_series) else 0.0,
+            "source": unbalance_source
+        }
+
+        # THD de tension y de corriente (media entre fases)
+        thd_u_cols = [c for c in df.columns if c.startswith('THD U') and 'media [%]' in c]
+        thd_i_cols = [c for c in df.columns if c.startswith('THD I') and 'media [%]' in c
+                      and 'N' not in c]
+        thd_u_avg = df[thd_u_cols].mean(axis=1) if thd_u_cols else pd.Series(0.0, index=df.index)
+        thd_i_avg = df[thd_i_cols].mean(axis=1) if thd_i_cols else pd.Series(0.0, index=df.index)
+        # Muestras "con carga" (I media >= 30% del pico): THD I y K-factor solo
+        # son interpretables con carga; en vacio ambos se disparan sin sentido
+        # operativo (IEEE 519 evalua el THD I a carga nominal). Sobre este
+        # registro, THD I pasa de 49.4% (todas) a un valor de carga real y
+        # K-factor de max=327 a max=22.
+        if i_cols:
+            i_peak = float(df[i_cols].apply(pd.to_numeric, errors='coerce').max().max())
+            loaded_mask = (df[i_cols].apply(pd.to_numeric, errors='coerce')
+                           .mean(axis=1) >= 0.30 * i_peak)
+            loaded_scope = "muestras con I >= 30% del pico"
+        else:
+            i_peak = 0.0
+            loaded_mask = pd.Series(True, index=df.index)
+            loaded_scope = "todas las muestras"
+
+        # THD de corriente de las FASES (se excluye el neutro: su THD describe
+        # la distorsion triplen, no la carga del transformador).
+        thd_i_loaded = thd_i_avg[loaded_mask.values]
+        thd_u = {"mean": round(float(thd_u_avg.mean()), 2),
+                 "p95": round(float(thd_u_avg.quantile(0.95)), 2),
+                 "max": round(float(thd_u_avg.max()), 2)}
+        thd_i = {"mean": round(float(thd_i_loaded.mean()), 2) if len(thd_i_loaded) else 0.0,
+                 "p95": round(float(thd_i_loaded.quantile(0.95)), 2) if len(thd_i_loaded) else 0.0,
+                 "max": round(float(thd_i_loaded.max()), 2) if len(thd_i_loaded) else 0.0,
+                 "scope": loaded_scope}
+
+        # Corriente de neutro: sobrecarga por cargas monofasicas y triplen
+        n_col = next((c for c in df.columns if c.startswith('I *N') and 'media [A]' in c), None)
+        i_phase_avg = float(df[i_cols].mean().mean()) if i_cols else 0.0
+        if n_col:
+            n_series = pd.to_numeric(df[n_col], errors='coerce').dropna()
+            neutral = {
+                "mean_a": round(float(n_series.mean()), 2),
+                "p95_a": round(float(n_series.quantile(0.95)), 2),
+                "max_a": round(float(n_series.max()), 2),
+                "pct_of_phase": round(float(n_series.max()) / i_phase_avg * 100.0, 1) if i_phase_avg > 0 else 0.0
+            }
+        else:
+            neutral = {"mean_a": 0.0, "p95_a": 0.0, "max_a": 0.0, "pct_of_phase": 0.0}
+
+        # K-factor (derating de transformador, IEEE C57.110). Solo tiene sentido
+        # con carga: en vacio K se dispara artificialmente (el registro daba
+        # max=327 sobre todas las muestras y 22 sobre las muestras con carga).
+        # Se excluye la columna del neutro (K N describe la distorsion triplen).
+        k_cols = [c for c in df.columns if c.startswith('K ') and 'media [---]' in c
+                  and ' N ' not in c]
+        if k_cols:
+            k_mat = pd.concat(
+                [pd.to_numeric(df.loc[loaded_mask.values, c], errors='coerce')
+                 for c in k_cols]
+            ).dropna()
+        else:
+            k_mat = pd.Series(dtype=float)
+        k_factor = {
+            "mean": round(float(k_mat.mean()), 2) if len(k_mat) else 0.0,
+            "p95": round(float(k_mat.quantile(0.95)), 2) if len(k_mat) else 0.0,
+            "max": round(float(k_mat.max()), 2) if len(k_mat) else 0.0,
+            "samples": int(len(k_mat)),
+            "scope": loaded_scope
+        }
+
+        # Crest factor (U/I): clipping/notching si CF se aleja de sqrt(2)
+        cf_u_cols = [c for c in df.columns if c.startswith('CF U') and 'media [---]' in c]
+        cf_i_cols = [c for c in df.columns if c.startswith('CF I') and 'media [---]' in c]
+        cf_u = pd.concat([pd.to_numeric(df[c], errors='coerce') for c in cf_u_cols]).dropna() if cf_u_cols else pd.Series(dtype=float)
+        cf_i = pd.concat([pd.to_numeric(df[c], errors='coerce') for c in cf_i_cols]).dropna() if cf_i_cols else pd.Series(dtype=float)
+        crest = {
+            "u": round(float(cf_u.mean()), 3) if len(cf_u) else 0.0,
+            "i": round(float(cf_i.mean()), 3) if len(cf_i) else 0.0
+        }
+
+        # Frecuencia (EN 50160: ±0.5 Hz)
+        f_col = next((c for c in df.columns if c.startswith('f ') and 'media [Hz]' in c), None)
+        if f_col:
+            f_series = pd.to_numeric(df[f_col], errors='coerce').dropna()
+            f_dev = (f_series - 50.0).abs()
+            frequency = {
+                "mean": round(float(f_series.mean()), 3),
+                "p95_dev": round(float(f_dev.quantile(0.95)), 3) if len(f_dev) else 0.0,
+                "min": round(float(f_series.min()), 3),
+                "max": round(float(f_series.max()), 3)
+            }
+        else:
+            frequency = {"mean": 0.0, "p95_dev": 0.0, "min": 0.0, "max": 0.0}
+
+        # Eventos de sag/swell sostenidos (agrupa muestras contiguas)
+        def _group_events(mask: pd.Series, depth_series: pd.Series, kind: str):
+            evts = []
+            in_event = False
+            start_i = 0
+            for i, flag in enumerate(mask.values):
+                if flag and not in_event:
+                    in_event = True
+                    start_i = i
+                elif not flag and in_event:
+                    in_event = False
+                    evts.append((start_i, i - 1))
+            if in_event:
+                evts.append((start_i, len(mask) - 1))
+            out = []
+            for s_i, e_i in evts:
+                seg = depth_series.iloc[s_i:e_i + 1]
+                depth = float(seg.min()) if kind == 'sag' else float(seg.max())
+                worst_phase = None
+                if v_cols:
+                    worst_col = seg.idxmin() if kind == 'sag' else seg.idxmax()
+                    worst_phase = str(worst_col).split(' ')[1] if ' ' in str(worst_col) else str(worst_col)
+                out.append({
+                    "start": df['timestamp'].iloc[s_i].strftime('%H:%M:%S'),
+                    "end": df['timestamp'].iloc[e_i].strftime('%H:%M:%S'),
+                    "duration_min": round(float((df['timestamp'].iloc[e_i] - df['timestamp'].iloc[s_i]).total_seconds() / 60.0), 1),
+                    "extreme_v": round(depth, 1),
+                    "depth_pct": round(abs(depth - vnom) / vnom * 100.0, 1),
+                    "phase": worst_phase
+                })
+            return out
+
+        v_min_phase = df[v_cols].min(axis=1) if v_cols else pd.Series(vnom, index=df.index)
+        v_max_phase = df[v_cols].max(axis=1) if v_cols else pd.Series(vnom, index=df.index)
+        sag_mask = v_min_phase < 0.90 * vnom
+        swell_mask = v_max_phase > 1.10 * vnom
+        sags = _group_events(sag_mask, v_min_phase, 'sag')
+        swells = _group_events(swell_mask, v_max_phase, 'swell')
+
+        # Checks de cumplimiento (EN 50160 / IEC 61000)
+        def _status(value, ok_max, warn_max):
+            if value <= ok_max:
+                return "ok"
+            if value <= warn_max:
+                return "warn"
+            return "bad"
+
+        if v_cols:
+            v_dev_pct = voltage_stats["p95_dev"]
+        else:
+            v_dev_pct = 0.0
+
+        checks = [
+            {"id": "voltage", "label": "Tensión (±10%)",
+             "value": f"{voltage_stats['l1']['mean']:.1f} V",
+             "limit": f"±10% de {vnom:.0f} V (P95)",
+             "status": _status(v_dev_pct, 10.0, 12.0),
+             "note": f"P95 {v_dev_pct:.1f}% · máx {voltage_stats['max_dev']:.1f}% · "
+                     f"{voltage_stats['samples_out']} muestras fuera"},
+            {"id": "unbalance", "label": "Desequilibrio de tensión",
+             "value": f"{unbalance['mean']:.2f} %",
+             "limit": "< 2% P95 (EN 50160)",
+             "status": _status(unbalance['p95'], 2.0, 3.0),
+             "note": f"P95 {unbalance['p95']:.2f}% · máx {unbalance['max']:.2f}% · {unbalance['source']}"},
+            {"id": "thd_u", "label": "THD de tensión",
+             "value": f"{thd_u['mean']:.1f} %",
+             "limit": "< 8% P95 (EN 50160 LV)",
+             "status": _status(thd_u['p95'], 5.0, 8.0),
+             "note": f"P95 {thd_u['p95']:.1f}% · máx {thd_u['max']:.1f}%"},
+            {"id": "thd_i", "label": "THD de corriente",
+             "value": f"{thd_i['mean']:.1f} %",
+             "limit": "informativo",
+             "status": _status(thd_i['p95'], 30.0, 60.0),
+             "note": f"P95 {thd_i['p95']:.1f}% · máx {thd_i['max']:.1f}% · "
+                     f"{thd_i['scope']} · alto = electrónica de potencia"},
+            {"id": "neutral", "label": "Corriente de neutro",
+             "value": f"{neutral['max_a']:.1f} A",
+             "limit": "< 50% de fase",
+             "status": _status(neutral['pct_of_phase'], 50.0, 80.0),
+             "note": f"P95 {neutral['p95_a']:.1f} A · {neutral['pct_of_phase']:.0f}% de la fase · riesgo por triplen"},
+            {"id": "k_factor", "label": "K-factor (transformador)",
+             "value": f"{k_factor['mean']:.1f}",
+             "limit": "< 4 P95 (IEEE C57.110)",
+             "status": _status(k_factor['p95'], 4.0, 9.0),
+             "note": f"P95 {k_factor['p95']:.1f} · máx {k_factor['max']:.1f} · {k_factor['scope']}"},
+            {"id": "frequency", "label": "Frecuencia",
+             "value": f"{frequency['mean']:.2f} Hz",
+             "limit": "50 Hz ±0.5 (P95)",
+             "status": _status(frequency['p95_dev'], 0.5, 1.0),
+             "note": f"Desvío P95 {frequency['p95_dev']:.3f} Hz · "
+                     f"rango {frequency['min']:.2f}-{frequency['max']:.2f} Hz"},
+            {"id": "sags", "label": "Sags / Swells",
+             "value": f"{len(sags)} / {len(swells)}",
+             "limit": "0 sostenidos",
+             "status": "ok" if len(sags) == 0 and len(swells) == 0 else "warn",
+             "note": f"U<90%: {len(sags)} · U>110%: {len(swells)}"}
+        ]
+
+        # Series temporales decimadas para los graficos
+        step = max(1, len(df) // max(1, max_points))
+        idx = np.arange(0, len(df), step)
+
+        def _series(col: str, default: float = 0.0):
+            if col in df.columns:
+                s = pd.to_numeric(df[col], errors='coerce').fillna(default)
+                return [round(float(v), 2) for v in s.iloc[idx]]
+            return [default] * len(idx)
+
+        timestamps_out = df['timestamp'].iloc[idx].dt.strftime('%H:%M:%S').tolist()
+
+        return {
+            "vnom": vnom,
+            "samples": int(len(df)),
+            "method": "Cumplimiento evaluado con el percentil 95 de las muestras "
+                      "(criterio EN 50160); el extremo absoluto se reporta en la nota. "
+                      "K-factor restringido a muestras con carga.",
+            "voltage": voltage_stats,
+            "unbalance": unbalance,
+            "thd_u": thd_u,
+            "thd_i": thd_i,
+            "neutral": neutral,
+            "k_factor": k_factor,
+            "crest": crest,
+            "frequency": frequency,
+            "checks": checks,
+            "sags": sags,
+            "swells": swells,
+            "timeseries": {
+                "timestamps": timestamps_out,
+                "v_l1": _series('U L1 media [V]', 0.0),
+                "v_l2": _series('U L2 media [V]', 0.0),
+                "v_l3": _series('U L3 media [V]', 0.0),
+                "thd_u": [round(float(v), 2) for v in thd_u_avg.iloc[idx]],
+                "i_n": _series(n_col, 0.0) if n_col else [],
+                "u2u1": [round(float(v), 3) for v in unbalance_series.iloc[idx]] if u2u1_col else [],
+                "i_l1": _series('I *L1 media [A]', 0.0),
+                "i_l2": _series('I *L2 media [A]', 0.0),
+                "i_l3": _series('I *L3 media [A]', 0.0)
+            }
+        }

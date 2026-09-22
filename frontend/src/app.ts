@@ -13,7 +13,8 @@ import {
   NILMAnalysisResult,
   ActiveTab,
   BenchmarkRow,
-  BenchmarkResult
+  BenchmarkResult,
+  PowerQualityReport
 } from './types/nilm';
 
 /** Escapa HTML para evitar XSS via nombres Ground-Truth personalizados. */
@@ -44,6 +45,9 @@ class NILMApp {
 
   /* MEJORA #9/#10: benchmark de algoritmos + estabilidad de umbrales */
   private benchmark: BenchmarkResult | null = null;
+
+  /* MEJORA #21: diagnóstico de calidad energética */
+  private powerQuality: PowerQualityReport | null = null;
 
   private chartCleanups: Array<() => void> = [];
 
@@ -270,16 +274,21 @@ class NILMApp {
   private async refreshData() {
     this.showLoading(true);
     try {
-      // Parallel loading of Summary, Timeseries, Harmonics
-      const [sum, ts, harm] = await Promise.all([
+      // Parallel loading of Summary, Timeseries, Harmonics, Power Quality
+      const [sum, ts, harm, pq] = await Promise.all([
         api.getSummary(this.currentDatasetId),
         api.getTimeseries(this.currentDatasetId, 1200),
-        api.getHarmonics(this.currentDatasetId)
+        api.getHarmonics(this.currentDatasetId),
+        api.getPowerQuality(this.currentDatasetId, 600).catch((err) => {
+          console.error('Calidad energética no disponible:', err);
+          return null;
+        })
       ]);
 
       this.summary = sum;
       this.timeseries = ts;
       this.harmonics = harm;
+      this.powerQuality = pq;
 
       this.updateKPIs();
 
@@ -393,7 +402,10 @@ class NILMApp {
         <td>${loadBadge}</td>
         <td><strong>${m.nominal_power_kw.toFixed(1)} kW</strong></td>
         <td>${m.peak_current_a.toFixed(1)} A</td>
+        <td>${m.avg_inrush != null ? '×' + m.avg_inrush.toFixed(1) : '--'}</td>
         <td>${m.thd_pct.toFixed(1)} %</td>
+        <td>${m.avg_cosphi != null && m.avg_cosphi > 0 ? m.avg_cosphi.toFixed(3) : '--'}</td>
+        <td>${m.phase_type ? escapeHtml(m.phase_type) : '--'}</td>
         <td>${m.event_count} arranques</td>
         <td>${m.active_minutes.toFixed(0)} min</td>
         <td><strong>${m.energy_kwh.toFixed(2)} kWh</strong></td>
@@ -521,12 +533,16 @@ class NILMApp {
       this.renderHourlyTab();
     } else if (this.activeTab === 'quality') {
       this.renderQualityTab();
+    } else if (this.activeTab === 'pq') {
+      this.renderPowerQualityTab();
     } else if (this.activeTab === 'harmonic') {
       this.renderHarmonicTab();
     } else if (this.activeTab === 'fhmm') {
       this.renderFhmmTab();
     } else if (this.activeTab === 'validation') {
       this.renderValidationTab();
+    } else if (this.activeTab === 'standby') {
+      this.renderStandbyTab();
     } else if (this.activeTab === 'benchmark') {
       this.renderBenchmarkTab();
     }
@@ -628,6 +644,18 @@ class NILMApp {
           <div class="mc-stat">
             <span class="mc-stat-label">Distorsión THD</span>
             <span class="mc-stat-val">${m.thd_pct.toFixed(1)} %</span>
+          </div>
+          <div class="mc-stat">
+            <span class="mc-stat-label">Ratio de Inrush</span>
+            <span class="mc-stat-val">${m.avg_inrush != null ? '×' + m.avg_inrush.toFixed(1) : '--'}</span>
+          </div>
+          <div class="mc-stat">
+            <span class="mc-stat-label">cos φ (media)</span>
+            <span class="mc-stat-val">${m.avg_cosphi != null && m.avg_cosphi > 0 ? m.avg_cosphi.toFixed(3) : '--'}</span>
+          </div>
+          <div class="mc-stat">
+            <span class="mc-stat-label">Tipo de Fase</span>
+            <span class="mc-stat-val">${m.phase_type ? escapeHtml(m.phase_type) : '--'}</span>
           </div>
           <div class="mc-stat">
             <span class="mc-stat-label">Total Arranques</span>
@@ -884,7 +912,12 @@ class NILMApp {
           avg_delta_h5: m.avg_delta_h5 || 0,
           avg_delta_h7: m.avg_delta_h7 || 0,
           harm_ratio_pct: m.harm_ratio_pct || m.harmonic_signature_pct || 0,
-          avg_thd: m.thd_pct, avg_delta_p: m.nominal_power_kw, count: m.event_count
+          avg_thd: m.thd_pct, avg_delta_p: m.nominal_power_kw, count: m.event_count,
+          /* MEJORA #20: firmas extendidas disponibles también en el fallback */
+          avg_cosphi: m.avg_cosphi || 0,
+          avg_inrush: m.avg_inrush || 1,
+          phase_type: m.phase_type || '',
+          load_class: m.load_class || ''
         }));
 
     const canvasSig = document.getElementById('chart-harmonic-signature') as HTMLCanvasElement;
@@ -1174,6 +1207,60 @@ class NILMApp {
 
   /* ================= MEJORA #9/#10: Benchmark ================= */
 
+  /** MEJORA #13: fugas / standby — KPIs del residuo + curva de duración. */
+  private renderStandbyTab(): void {
+    const sb = this.analysis?.standby ?? null;
+    const kpiBox = document.getElementById('standby-kpis');
+    const methodBox = document.getElementById('standby-method');
+    const empty = '<div class="empty-state"><p>Ejecuta el análisis NILM para cuantificar el consumo fantasma (residuo no atribuido).</p></div>';
+    if (!sb || !sb.duration_baseline_kw || sb.duration_baseline_kw.length < 2) {
+      if (kpiBox) kpiBox.innerHTML = empty;
+      if (methodBox) methodBox.innerHTML = '';
+      const c1 = document.getElementById('chart-standby-duration') as HTMLCanvasElement | null;
+      const c2 = document.getElementById('chart-standby-hist') as HTMLCanvasElement | null;
+      if (c1) { const g = c1.getContext('2d'); if (g) g.clearRect(0, 0, c1.width, c1.height); }
+      if (c2) { const g = c2.getContext('2d'); if (g) g.clearRect(0, 0, c2.width, c2.height); }
+      return;
+    }
+    const b = sb.baseline_kw;
+    const n = sb.night_kw;
+    const cards = [
+      { label: 'Standby medio (P50)', value: `${b.p50.toFixed(2)} kW`, note: `media ${b.mean.toFixed(2)} · P10 ${b.p10.toFixed(2)} · máx ${b.max.toFixed(2)} kW` },
+      { label: `Mínimo nocturno (${n.window})`, value: `${n.p10.toFixed(2)} kW`, note: `P50 noche ${n.p50.toFixed(2)} kW · ${n.samples} muestras` },
+      { label: 'Cuota del total', value: `${sb.share_pct.toFixed(1)} %`, note: `energía periodo ${sb.energy_kwh.toFixed(1)} kWh en ${sb.hours_covered.toFixed(1)} h` },
+      { label: 'Proyección anual', value: `${sb.annual_kwh.toFixed(0)} kWh/año`, note: 'media × 8760 h — multiplica por tu tarifa para el ahorro potencial' },
+    ];
+    if (kpiBox) {
+      kpiBox.innerHTML = cards.map(c => `
+        <div class="val-card">
+          <h4>${escapeHtml(c.label)}</h4>
+          <div class="val-main">${escapeHtml(c.value)}</div>
+          <small>${escapeHtml(c.note)}</small>
+        </div>`).join('');
+    }
+    if (methodBox) methodBox.innerHTML = `<small>${escapeHtml(sb.method)}</small>`;
+
+    const cDur = document.getElementById('chart-standby-duration') as HTMLCanvasElement | null;
+    if (cDur) {
+      const labels = sb.duration_pct.map(p => `${p.toFixed(0)}%`);
+      const res = ChartEngine.renderTimeSeries(
+        cDur, labels,
+        [
+          { name: 'Standby (residuo)', data: sb.duration_baseline_kw, color: '#F59E0B', fill: true },
+          { name: 'Total medido', data: sb.duration_total_kw, color: '#00B5E2' }
+        ],
+        'kW', 'Curva de duración: potencia superada el X% del tiempo'
+      );
+      this.chartCleanups.push(res.destroy);
+    }
+    const cHist = document.getElementById('chart-standby-hist') as HTMLCanvasElement | null;
+    if (cHist && sb.hist.counts.length > 0) {
+      const labels = sb.hist.edges.slice(0, -1).map(e => e.toFixed(1));
+      const res = ChartEngine.renderBarChart(cHist, labels, sb.hist.counts, '#8B5CF6', '', 'Distribución del standby (kW)');
+      this.chartCleanups.push(res.destroy);
+    }
+  }
+
   private async runBenchmark() {
     if (!this.currentDatasetId) {
       this.showToast('Carga primero una medición para ejecutar el benchmark.', 'error');
@@ -1278,6 +1365,116 @@ class NILMApp {
       if (progress) progress.innerHTML = `<p>❌ Error en el benchmark: ${escapeHtml(String(err?.message ?? err))}</p>`;
       if (btn) btn.disabled = false;
       this.showToast(`Error en el benchmark: ${err?.message ?? err}`, 'error');
+    }
+  }
+
+  /* ================= MEJORA #21: Calidad Energética ================= */
+
+  private renderPowerQualityTab() {
+    const checksEl = document.getElementById('pq-checks');
+    const eventsEl = document.getElementById('pq-events-table');
+    const canvasV = document.getElementById('chart-pq-voltage') as HTMLCanvasElement | null;
+    const canvasTHD = document.getElementById('chart-pq-thdu') as HTMLCanvasElement | null;
+    const canvasN = document.getElementById('chart-pq-neutral') as HTMLCanvasElement | null;
+
+    if (!this.powerQuality) {
+      if (checksEl) {
+        checksEl.innerHTML = '<div class="empty-state"><p>Calidad energética no disponible para esta medición (el export debe incluir columnas de tensión, THD y neutro).</p></div>';
+      }
+      return;
+    }
+    const pq = this.powerQuality;
+
+    // Tarjetas de cumplimiento (ok/warn/bad)
+    if (checksEl) {
+      const icon: Record<string, string> = { ok: '✅', warn: '⚠️', bad: '❌' };
+      checksEl.innerHTML = pq.checks.map(c => `
+        <div class="val-card pq-check-${c.status}">
+          <span>${icon[c.status] || ''} ${escapeHtml(c.label)}</span>
+          <strong>${escapeHtml(c.value)}</strong>
+          <small>${escapeHtml(c.limit)}</small>
+          <em>${escapeHtml(c.note)}</em>
+        </div>`).join('');
+    }
+
+    // Gráfico 1: tensión por fase (3 series + línea del nominal)
+    if (canvasV) {
+      const res = ChartEngine.renderTimeSeries(
+        canvasV,
+        pq.timeseries.timestamps,
+        [
+          { name: 'U L1', data: pq.timeseries.v_l1, color: '#EF4444' },
+          { name: 'U L2', data: pq.timeseries.v_l2, color: '#10B981' },
+          { name: 'U L3', data: pq.timeseries.v_l3, color: '#3B82F6' }
+        ],
+        'V',
+        `Tensión por fase (nominal ${pq.vnom.toFixed(0)} V, límites ±10%)`
+      );
+      if (res && typeof res.destroy === 'function') this.chartCleanups.push(res.destroy);
+    }
+
+    // Gráfico 2: THD U + desequilibrio (eje %)
+    if (canvasTHD) {
+      const series: any[] = [
+        { name: 'THD U (%)', data: pq.timeseries.thd_u, color: '#F59E0B' }
+      ];
+      if (pq.timeseries.u2u1.length > 0) {
+        series.push({ name: 'U2/U1 desequilibrio (%)', data: pq.timeseries.u2u1, color: '#8B5CF6' });
+      }
+      const res = ChartEngine.renderTimeSeries(
+        canvasTHD,
+        pq.timeseries.timestamps,
+        series,
+        '%',
+        'THD de tensión y desequilibrio (límite EN 50160: THD U < 8%, U2/U1 < 2%)'
+      );
+      if (res && typeof res.destroy === 'function') this.chartCleanups.push(res.destroy);
+    }
+
+    // Gráfico 3: corriente de neutro vs fases
+    if (canvasN) {
+      const series: any[] = [
+        { name: 'I L1', data: pq.timeseries.i_l1, color: '#EF4444' },
+        { name: 'I L2', data: pq.timeseries.i_l2, color: '#10B981' },
+        { name: 'I L3', data: pq.timeseries.i_l3, color: '#3B82F6' }
+      ];
+      if (pq.timeseries.i_n.length > 0) {
+        series.push({ name: 'I Neutro', data: pq.timeseries.i_n, color: '#F97316', dash: [6, 4] });
+      }
+      const res = ChartEngine.renderTimeSeries(
+        canvasN,
+        pq.timeseries.timestamps,
+        series,
+        'A',
+        'Corriente de neutro vs. fases (neutro alto = armónicos triplen de cargas monofásicas)'
+      );
+      if (res && typeof res.destroy === 'function') this.chartCleanups.push(res.destroy);
+    }
+
+    // Tabla de eventos de tensión (sags + swells combinados, ordenados por hora)
+    if (eventsEl) {
+      const all = [
+        ...pq.sags.map(e => ({ ...e, kind: 'Sag (<90%)' })),
+        ...pq.swells.map(e => ({ ...e, kind: 'Swell (>110%)' }))
+      ].sort((a, b) => a.start.localeCompare(b.start));
+
+      if (all.length === 0) {
+        eventsEl.innerHTML = '<div class="empty-state"><p>✅ Sin sags ni swells sostenidos en toda la medición (U siempre entre 90% y 110% del nominal).</p></div>';
+      } else {
+        eventsEl.innerHTML = `<div class="table-responsive"><table class="data-table">
+          <thead><tr><th>Tipo</th><th>Inicio</th><th>Fin</th><th>Duración (min)</th><th>Tensión extrema (V)</th><th>Profundidad (%)</th><th>Fase más afectada</th></tr></thead>
+          <tbody>${all.map(e => `
+            <tr>
+              <td>${e.kind === 'Sag (<90%)' ? '⬇️ Sag' : '⬆️ Swell'}</td>
+              <td>${escapeHtml(e.start)}</td>
+              <td>${escapeHtml(e.end)}</td>
+              <td>${e.duration_min.toFixed(1)}</td>
+              <td>${e.extreme_v.toFixed(1)} V</td>
+              <td>${e.depth_pct.toFixed(1)} %</td>
+              <td>${e.phase ? escapeHtml(e.phase) : '--'}</td>
+            </tr>`).join('')}</tbody>
+        </table></div>`;
+      }
     }
   }
 

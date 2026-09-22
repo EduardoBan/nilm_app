@@ -90,6 +90,19 @@ class HarmonicsHandler(BaseHandler):
             self.set_status(500)
             self.write_json({"status": "error", "message": str(e)})
 
+class PowerQualityHandler(BaseHandler):
+    """MEJORA #21: diagnóstico de calidad energética (tensión, desequilibrio,
+    neutro, K-factor, THD U/I, sags/swells) contra límites EN 50160/IEC."""
+    def get(self):
+        try:
+            dataset_id = self.get_argument("dataset_id", "coop_gouge_v2_10_abril")
+            max_points = int(self.get_argument("max_points", "600"))
+            report = dm.get_power_quality(dataset_id, max_points=max_points)
+            self.write_json({"status": "success", "data": report})
+        except Exception as e:
+            self.set_status(500)
+            self.write_json({"status": "error", "message": str(e)})
+
 class UploadHandler(BaseHandler):
     """Accepts a measurement file (.xlsx/.xls/.csv) chosen by the user and makes
     it available for analysis through the standard dataset endpoints."""
@@ -302,6 +315,7 @@ def make_app():
         (r"/api/summary", SummaryHandler),
         (r"/api/timeseries", TimeseriesHandler),
         (r"/api/harmonics", HarmonicsHandler),
+        (r"/api/powerquality", PowerQualityHandler),
         (r"/api/upload", UploadHandler),
         (r"/api/analyze", AnalyzeHandler),
         (r"/api/labels", LabelsHandler),

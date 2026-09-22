@@ -96,8 +96,9 @@ D. NUEVOS ANALISIS DE VALOR
 #13 Fugas y standby
     El residuo (baseline) tras desagregar cuantifica consumo fantasma:
     kW minimos nocturnos x tarifa = ahorro potencial anual. Analisis
-    directo y muy apreciado en informes.
-    Impacto: ALTO | Esfuerzo: BAJO | Estado: PENDIENTE
+    directo y muy apreciado en informes. Impacto: ALTO | Esfuerzo: BAJO
+    Estado: HECHA (2026-09-22) — _standby_report + campo 'standby' +
+    pestana Fugas/Standby (KPIs, curva duracion, histograma).
 
 #14 Anomalias sobre el residuo
     MAE movil del residuo; picos sostenidos = degradacion de equipo o
@@ -141,8 +142,10 @@ ORDEN RECOMENDADO (relacion impacto/esfuerzo)
 1. #5  Armonicos en clustering        -> 30 min, mejora inmediata   [HECHA]
 2. #1  FHMM bivariado P+Q             -> mayor salto de calidad     [HECHA]
 3. #9 + #10  benchmark + estabilidad  -> evidencia del mejor algoritmo [HECHA]
-4. #13 Fugas/standby                  -> analisis de negocio directo
-5. #2  Priors horarios                -> cuando el Gantt nocturno
+4. #11 Firmas extendidas (cos phi/inrush/fases) -> sube el F1    [HECHA]
+5. #12 Pestaña Calidad de Energia     -> informe ejecutivo directo  [HECHA]
+6. #13 Fugas/standby                  -> analisis de negocio directo  [HECHA 2026-09-22]
+7. #2  Priors horarios                -> cuando el Gantt nocturno
                                          sea un problema real          [HECHA]
 =====================================================================
 
@@ -165,4 +168,88 @@ DETALLE DE LAS MEJORAS IMPLEMENTADAS
   frontend/src/types/nilm.ts (BenchmarkRow/BenchmarkResult,
   ActiveTab + 'benchmark'), frontend/src/app.ts (runBenchmark /
   renderBenchmarkTab). Sin cambios en backend ni CSS.
+=====================================================================
+
+---------------------------------------------------------------------
+#11  Firmas extendidas por evento: cos(phi), inrush y balance de fases
+     (2026-09-21)
+---------------------------------------------------------------------
+Motivacion: el vector de features del clustering solo tenia
+[abs_delta_P, abs_delta_I, THD_avg, abs_delta_Q, abs_delta_H3/H5/H7].
+Tres rasgos mas, ya presentes en el export del PQM, discriminan equipos
+que hoy caen en el mismo cluster.
+
+  (a) cos(phi): cos(phi) L1/L2/L3 media [---], tomado en VALOR ABSOLUTO
+      por fase (en este export L1/L2 vienen negativas por convencion de
+      cuadrante; la columna Sigma mezcla signos y ademas es de baja
+      calidad: media 0.225 vs 0.669 de las fases). Se agrega
+      cosphi_avg = media(|fases|) y delta_cosphi = diff del anterior.
+      Mapa de firmas: motor DOL arranca con cos phi ~0.3-0.5 y sube al
+      cargar; VFD mantiene cos phi alto con PF penalizado por THD
+      (PF - cos phi = penalizacion armonica); resistencia: cos phi ~1.
+  (b) Inrush: ratio = |delta_I| / I_previa (con clip 0.5 A y tope 20x),
+      log1p para compactar. Advertencia honesta: con medias de 10 s el
+      pico real de arranque (5-8x en un DOL) NO es observable; el ratio
+      mide la magnitud relativa del escalon sobre la carga de fondo. Se
+      probo un estimador de overshoot (pico de la ventana posterior /
+      regimen asentado) y resulto inestable, por eso se mantiene el
+      estimador simple y se documenta la limitacion.
+  (c) Concentracion de fase: max(|delta_I fase|) / sum(|delta_I fase|).
+      ~1/3 trifasico equilibrado, ~1 monofasico -> phase_type
+      ("Trifasico equilibrado" / "Asimetrico (2 fases)" /
+      "Monofasico (1 fase)"), tambien como feature.
+  Reglas nuevas en _classify_load_class: inrush >= 4x con I >= 5 A ->
+  "Motor Inductivo (Arranque DOL)"; inrush <= 1.6x con cos phi >= 0.97
+  y P >= 1 kW -> "Carga Resistiva". El post-nombrado añade
+  "Motor DOL / Compresor (inrush xN)".
+  Salidas: machine_statistics[].avg_cosphi / avg_inrush / phase_type,
+  harmonic_signatures[] y columnas Inrush x / cos phi / Fases en la
+  tabla de equipos y en las fichas tecnicas.
+  Archivos: backend/nilm_engine.py (_classify_load_class, detect_events,
+  cluster_appliances, machine_statistics, harmonic_signatures),
+  frontend/src/types/nilm.ts, frontend/src/app.ts + index.html,
+  frontend/css/styles.css. Verificado con scripts/_e2e_pq.py y
+  tests/test_engine.py::test_extended_signatures_cosphi_inrush_and_phase.
+
+---------------------------------------------------------------------
+#12  Pestaña "Calidad Energetica" y endpoint /api/powerquality
+     (2026-09-21)
+---------------------------------------------------------------------
+100% calculo sobre columnas que el PQM ya exporta, sin dependencias
+nuevas. DataManager.get_power_quality(dataset_id, max_points=600) +
+PowerQualityHandler (Tornado) + pestaña frontend.
+
+  Semáforo de cumplimiento (ok / warn / bad) evaluado sobre el
+  PERCENTIL 95 de las muestras (criterio EN 50160: el 95% del tiempo),
+  reportando ademas el extremo absoluto en la nota. El criterio de
+  maximo absoluto daba falsas alarmas (tension "bad" por 30 muestras
+  de un transitorio, K-factor 328 en vacio):
+    - Tension: desvio P95 vs +-10% del nominal comercial mas cercano.
+    - Desequilibrio: U2/U1 real del analizador (fuente reportada);
+      fallback (max-min)/media. Limite < 2% (EN 50160).
+    - THD U: < 8% (LV).
+    - THD I: solo FASES (se excluye THD I N, que describe la distorsion
+      triplen) y solo muestras con carga (I media >= 30% del pico),
+      porque el THD I solo es interpretable a carga nominal
+      (IEEE 519). Sobre este registro: 49.4% -> 19.4% de carga real.
+    - Neutro: I*N p95 y % sobre la corriente media de fase (triplen).
+    - K-factor: IEEE C57.110, columnas de fase (excluye K N) y solo
+      muestras con carga (max 328 -> 22.2; P95 12.2).
+    - Frecuencia: desvio P95 vs 50 Hz +-0.5 (EN 50160).
+    - Sags/swells sostenidos: agrupa muestras contiguas con U < 90% o
+      > 110% del nominal; reporta duracion, tension extrema,
+      profundidad y fase mas afectada.
+  Graficos: tension por fase vs nominal, THD U + desequilibrio (eje %),
+  neutro vs fases. Limitacion documentada: el PQM exporta medias de
+  10 s, por lo que se detectan depresiones sostenidas, no sags de
+  medio ciclo.
+  Archivos: backend/data_manager.py (get_power_quality),
+  backend/server.py (PowerQualityHandler + ruta), frontend/index.html,
+  frontend/src/services/api.ts, frontend/src/types/nilm.ts,
+  frontend/src/app.ts (+ ChartEngine), frontend/css/styles.css.
+  Verificado con scripts/_e2e_pq.py y scripts/_smoke_http.py (HTTP 200,
+  66 KB, JSON estricto).
+=====================================================================
+ FIN DEL REGISTRO DE MEJORAS (2026-09-22: #13 fugas/standby implementada;
+ anterior 2026-09-21: #11 y #12 implementadas)
 =====================================================================
