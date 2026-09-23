@@ -623,3 +623,70 @@ def test_residual_anomalies_flat_and_degenerate():
     assert rep["n_events"] == 0 and rep["events"] == []
     assert rep["anomalous_pct"] == 0.0
     assert NILMEngine._residual_anomalies(df, np.ones(n - 1), flat) == {}
+
+
+def test_match_transitions_greedy_pairing():
+    """MEJORA #11: pareo greedy con tolerancia, referencia unica y vacios."""
+    ref = np.array(["2024-01-01T00:01:00", "2024-01-01T00:10:00",
+                    "2024-01-01T00:20:00"], dtype="datetime64[ns]")
+    det = np.array(["2024-01-01T00:01:05", "2024-01-01T00:10:04",
+                    "2024-01-01T00:35:00"], dtype="datetime64[ns]")
+    m = NILMEngine._match_transitions(det, ref, tol_s=60.0)
+    # Dos detectados dentro de tolerancia (5 s y 4 s), uno lejano -> FP.
+    assert m["tp"] == 2 and m["fp"] == 1 and m["fn"] == 1
+    assert m["detected"] == 3 and m["reference"] == 3
+    assert abs(m["precision"] - 2 / 3) < 1e-3
+    assert abs(m["recall"] - 2 / 3) < 1e-3
+    assert abs(m["f1"] - 2 / 3) < 1e-3
+    assert m["dt_max_s"] >= m["dt_median_s"] >= 0.0
+    assert m["dt_max_s"] <= 60.0
+    # Una referencia no puede emparejarse dos veces.
+    det2 = np.array(["2024-01-01T00:01:01", "2024-01-01T00:01:03"],
+                    dtype="datetime64[ns]")
+    m2 = NILMEngine._match_transitions(det2, ref[:1], tol_s=60.0)
+    assert m2["tp"] == 1 and m2["fp"] == 1 and m2["fn"] == 0
+    # Deteccion fuera de tolerancia -> FP + FN (sin pareo).
+    m3 = NILMEngine._match_transitions(
+        np.array(["2024-01-01T00:05:00"], dtype="datetime64[ns]"),
+        np.array(["2024-01-01T00:00:00"], dtype="datetime64[ns]"),
+        tol_s=60.0)
+    assert m3["tp"] == 0 and m3["fp"] == 1 and m3["fn"] == 1
+    # Entradas vacias: sin aciertos y sin division por cero.
+    m4 = NILMEngine._match_transitions(np.array([], dtype="datetime64[ns]"),
+                                       ref, tol_s=60.0)
+    assert m4["tp"] == 0 and m4["fp"] == 0 and m4["fn"] == 3
+    assert m4["precision"] == 0.0 and m4["recall"] == 0.0 and m4["f1"] == 0.0
+
+
+def test_validation_report_includes_transitions():
+    """MEJORA #11: transiciones por equipo + agregado global consistentes."""
+    import json
+    eng = NILMEngine(_FakeDM(make_df_harm()))
+    res = eng.analyze_dataset("synthetic", n_clusters=2, use_fhmm=True,
+                              max_states=2, power_threshold=0.5,
+                              current_threshold=2.0)
+    val = res.get("validation")
+    assert val and val.get("transitions_global"), \
+        "analyze_dataset debe devolver transitions_global"
+    tg = val["transitions_global"]
+    assert set(tg) >= {"tp", "fp", "fn", "detected", "reference",
+                       "precision", "recall", "f1",
+                       "dt_median_s", "dt_max_s"}
+    assert tg["detected"] == tg["tp"] + tg["fp"]
+    assert tg["reference"] == tg["tp"] + tg["fn"]
+    assert 0.0 <= tg["precision"] <= 1.0 and 0.0 <= tg["recall"] <= 1.0
+    assert 0.0 <= tg["f1"] <= 1.0
+    tp = fp = fn = 0
+    for m in val["machines"]:
+        t = m.get("transitions")
+        assert t is not None, "cada equipo debe exponer 'transitions'"
+        assert t["detected"] == t["tp"] + t["fp"]
+        assert t["reference"] == t["tp"] + t["fn"]
+        assert t["tolerance_s"] >= 60.0
+        assert 0.0 <= t["f1"] <= 1.0
+        tp += t["tp"]
+        fp += t["fp"]
+        fn += t["fn"]
+    # El agregado global es la suma de los equipos.
+    assert (tp, fp, fn) == (tg["tp"], tg["fp"], tg["fn"])
+    json.dumps(val, allow_nan=False)

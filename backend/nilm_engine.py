@@ -1711,6 +1711,55 @@ class NILMEngine:
             active[start:] = True
         return active
 
+    @staticmethod
+    def _match_transitions(detected, reference, tol_s):
+        """MEJORA #11: pareo greedy de transiciones (arranques) para el Gantt.
+
+        Empareja cada borde OFF->ON detectado en la curva desagregada con el
+        evento ON de referencia mas cercano dentro de una tolerancia temporal
+        (una referencia solo puede emparejarse una vez). Devuelve TP/FP/FN,
+        precision/recall/F1 y el desfase temporal (s) de los aciertos.
+        """
+        det = np.sort(np.asarray(detected, dtype='datetime64[ns]'))
+        ref = np.sort(np.asarray(reference, dtype='datetime64[ns]'))
+        tol = np.timedelta64(int(round(float(tol_s) * 1000)), 'ms')
+        used = np.zeros(len(ref), dtype=bool)
+        delays: List[float] = []
+        tp = 0
+        j = 0
+        for d in det:
+            # Referencias anteriores a d-tol no pueden emparejarse jamas.
+            while j < len(ref) and ref[j] < d - tol:
+                j += 1
+            best, best_gap = -1, None
+            k = j
+            while k < len(ref) and ref[k] <= d + tol:
+                if not used[k]:
+                    gap = abs(int(d - ref[k]))
+                    if best < 0 or gap < best_gap:
+                        best, best_gap = k, gap
+                k += 1
+            if best >= 0:
+                used[best] = True
+                tp += 1
+                delays.append(best_gap / 1e9)
+        fp = int(len(det)) - tp
+        fn = int(len(ref)) - tp
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * precision * recall / (precision + recall) \
+            if (precision + recall) > 0 else 0.0
+        return {
+            "tp": int(tp), "fp": int(fp), "fn": int(fn),
+            "detected": int(len(det)), "reference": int(len(ref)),
+            "precision": round(precision, 3),
+            "recall": round(recall, 3),
+            "f1": round(f1, 3),
+            "dt_median_s": round(float(np.median(delays)), 2) if delays else 0.0,
+            "dt_max_s": round(float(np.max(delays)), 2) if delays else 0.0,
+            "tolerance_s": round(float(tol_s), 2),
+        }
+
     def _validate_machine(self, df_work, events, cluster_info, disagg_power,
                           c, timestamps) -> Dict[str, Any]:
         """PASO 3: validacion de un equipo (consistencia de saltos ON y
@@ -1753,6 +1802,18 @@ class NILMEngine:
         f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
         accuracy = (tp + tn) / max(1, tp + fp + fn + tn)
 
+        # MEJORA #11: metrica de transiciones (arranques) para el Gantt:
+        # bordes OFF->ON de la curva desagregada vs eventos ON de referencia.
+        det_idx = np.nonzero(pred_on[1:] & ~pred_on[:-1])[0] + 1 \
+            if n_points > 1 else np.array([], dtype=int)
+        det_times = timestamps[det_idx]
+        dt_med_s = float(np.median(np.diff(timestamps)) / np.timedelta64(1, 's')) \
+            if n_points > 1 else 10.0
+        if not np.isfinite(dt_med_s) or dt_med_s <= 0:
+            dt_med_s = 10.0
+        transitions = self._match_transitions(det_times, on_times,
+                                              max(60.0, 2.0 * dt_med_s))
+
         # Metricas de regresion (energia) contra la referencia por eventos:
         # la senal de referencia vale el nivel nominal del equipo mientras esta
         # activo y 0 kW cuando no. MAE/RMSE en kW; RE = error relativo de la
@@ -1776,6 +1837,7 @@ class NILMEngine:
             "recall": round(recall, 3),
             "f1": round(f1, 3),
             "accuracy": round(accuracy, 3),
+            "transitions": transitions,
             "reg_mae_kw": round(reg_mae, 3),
             "reg_rmse_kw": round(reg_rmse, 3),
             "re_pct": round(re_pct, 1),
@@ -1800,11 +1862,30 @@ class NILMEngine:
         recall = cm["tp"] / (cm["tp"] + cm["fn"]) if (cm["tp"] + cm["fn"]) > 0 else 0.0
         f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
         accuracy = (cm["tp"] + cm["tn"]) / max(1, sum(cm.values()))
+        # MEJORA #11: agregado global de transiciones (sumas de conteos).
+        tr = {"tp": 0, "fp": 0, "fn": 0, "detected": 0, "reference": 0}
+        for m in machines:
+            t = m.get("transitions") or {}
+            for k in tr:
+                tr[k] += int(t.get(k, 0))
+        p_t = tr["tp"] / (tr["tp"] + tr["fp"]) if (tr["tp"] + tr["fp"]) > 0 else 0.0
+        r_t = tr["tp"] / (tr["tp"] + tr["fn"]) if (tr["tp"] + tr["fn"]) > 0 else 0.0
+        f1_t = 2 * p_t * r_t / (p_t + r_t) if (p_t + r_t) > 0 else 0.0
+        med_ms = [m["transitions"]["dt_median_s"] for m in machines
+                  if m.get("transitions") and m["transitions"]["tp"] > 0]
+        tr_global = {**tr,
+                     "precision": round(p_t, 3), "recall": round(r_t, 3),
+                     "f1": round(f1_t, 3),
+                     "dt_median_s": round(float(np.median(med_ms)), 2) if med_ms else 0.0,
+                     "dt_max_s": round(max((m["transitions"]["dt_max_s"]
+                                            for m in machines if m.get("transitions")),
+                                           default=0.0), 2)}
         return {
             "reconstruction": self._validate_reconstruction_error(df_work, disagg_power, baseline_curve),
             "confusion_global": {**cm, "precision": round(precision, 3),
                                  "recall": round(recall, 3), "f1": round(f1, 3),
                                  "accuracy": round(accuracy, 3)},
+            "transitions_global": tr_global,
             "machines": machines,
         }
 

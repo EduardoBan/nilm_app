@@ -86,6 +86,7 @@ Cuando NILMTK está disponible, el análisis devuelve los estados de potencia ag
    - **MAE del salto ON** por equipo: consistencia entre el ΔP del evento de arranque y el salto real en la curva desagregada.
    - **Matriz de confusión ON/OFF** (global y por equipo) contra la referencia de eventos pareados, con **precision / recall / F1 / accuracy** y gráfico de barras del F1 por equipo.
    - **Métricas de regresión (energía)** por equipo y global: **MAE/RMSE** de potencia (kW), **RE** (error relativo en la energía total acumulada, %) y **NEP** (error de potencia normalizado por la energía real).
+   - **Métrica de transiciones / arranques (MEJORA #11)**: pareo greedy de los bordes OFF→ON de cada curva desagregada contra los eventos ON de referencia (tolerancia `max(60 s, 2·dt)`, cada referencia una sola vez) con **TP/FP/FN, precision/recall/F1** y desfase temporal (med/máx), en tarjetas globales y filas por equipo de la pestaña Validación — la métrica que más importa para el Gantt.
 10. **Diagnóstico de Calidad Energética (MEJORA #21)**:
     - Pestaña **🔎 Calidad Energética** (`GET /api/powerquality`): semáforo de cumplimiento EN 50160 / IEC 61000 / IEEE C57.110 para tensión (±10 %), desequilibrio, THD U/I, corriente de neutro, K-factor y frecuencia; curvas de tensión por fase, THD U + desequilibrio y neutro vs. fases; y tabla de eventos sostenidos de **sag/swell** con duración, tensión extrema, profundidad y fase más afectada.
 

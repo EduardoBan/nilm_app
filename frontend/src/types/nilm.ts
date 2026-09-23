@@ -267,6 +267,21 @@ export interface ConfusionGlobal extends ConfusionCounts {
   accuracy?: number;
 }
 
+/* MEJORA #11: métrica de transiciones (arranques detectados vs reales) */
+export interface TransitionMetrics {
+  tp: number;
+  fp: number;
+  fn: number;
+  detected: number;
+  reference: number;
+  precision: number;
+  recall: number;
+  f1: number;
+  dt_median_s: number;
+  dt_max_s: number;
+  tolerance_s?: number;
+}
+
 export interface MachineValidation {
   id: number;
   name: string;
@@ -283,12 +298,16 @@ export interface MachineValidation {
   reg_rmse_kw?: number;
   re_pct?: number;
   nep?: number;
+  /* MEJORA #11: métrica de transiciones (arranques) por equipo */
+  transitions?: TransitionMetrics;
 }
 
 export interface ValidationReport {
   reconstruction: ReconstructionError;
   confusion_global: ConfusionGlobal;
   machines: MachineValidation[];
+  /* MEJORA #11: agregado global de transiciones */
+  transitions_global?: TransitionMetrics;
 }
 
 export interface NILMAnalysisResult {

@@ -2859,6 +2859,7 @@ class NILMApp {
       } else {
         const r = v.reconstruction;
         const cg = v.confusion_global;
+        const tg = v.transitions_global;
         summary.innerHTML = `
           <div class="val-card"><span>MAE reconstrucción</span><strong>${r.mae_kw.toFixed(3)} kW</strong></div>
           <div class="val-card"><span>RMSE</span><strong>${r.rmse_kw.toFixed(3)} kW</strong></div>
@@ -2869,7 +2870,10 @@ class NILMApp {
           <div class="val-card"><span>F1 global ON/OFF</span><strong>${cg.f1.toFixed(3)}</strong></div>
           <div class="val-card"><span>Accuracy global</span><strong>${(cg.accuracy ?? 0).toFixed(3)}</strong></div>
           <div class="val-card"><span>Precision / Recall</span><strong>${cg.precision.toFixed(3)} / ${cg.recall.toFixed(3)}</strong></div>
-          <div class="val-card"><span>Matriz global</span><strong>TP ${cg.tp} · FP ${cg.fp} · FN ${cg.fn} · TN ${cg.tn}</strong></div>`;
+          <div class="val-card"><span>Matriz global</span><strong>TP ${cg.tp} · FP ${cg.fp} · FN ${cg.fn} · TN ${cg.tn}</strong></div>${tg ? `
+          <div class="val-card"><span>F1 arranques (Gantt)</span><strong>${tg.f1.toFixed(3)}</strong></div>
+          <div class="val-card"><span>Arranques TP / FP / FN</span><strong>${tg.tp} · ${tg.fp} · ${tg.fn}</strong></div>
+          <div class="val-card"><span>Desfase arranques (med / máx)</span><strong>${tg.dt_median_s.toFixed(1)} / ${tg.dt_max_s.toFixed(1)} s</strong></div>` : ''}`;
       }
     }
 
@@ -2886,6 +2890,8 @@ class NILMApp {
               <span class="machine-f1">F1 ${m.f1.toFixed(3)}</span>
             </div>
             <div class="machine-val-row"><span>Arranques ref.</span><strong>${m.n_on_events}</strong></div>
+            ${m.transitions ? `<div class="machine-val-row"><span>Arranques det. TP / FP / FN</span><strong>${m.transitions.tp} · ${m.transitions.fp} · ${m.transitions.fn} — F1 ${m.transitions.f1.toFixed(3)}</strong></div>
+            <div class="machine-val-row"><span>Desfase arranques (med / máx)</span><strong>${m.transitions.dt_median_s.toFixed(1)} / ${m.transitions.dt_max_s.toFixed(1)} s (tol ${m.transitions.tolerance_s?.toFixed(0) ?? '60'} s)</strong></div>` : ''}
             <div class="machine-val-row"><span>MAE salto ON</span><strong>${m.jump_mae_kw.toFixed(3)} kW</strong></div>
             <div class="machine-val-row"><span>P / R / Acc</span><strong>${m.precision.toFixed(3)} / ${m.recall.toFixed(3)} / ${(m.accuracy ?? 0).toFixed(3)}</strong></div>
             <div class="machine-val-row"><span>MAE energía</span><strong>${(m.reg_mae_kw ?? 0).toFixed(3)} kW</strong></div>
