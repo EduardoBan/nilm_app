@@ -235,6 +235,13 @@ class AnalyzeHandler(BaseHandler):
             if not 1 <= max_states <= 5:
                 raise ValueError("max_states debe estar entre 1 y 5")
 
+            # MEJORA #6: seleccion automatica de K (Silhouette/Davies-Bouldin)
+            auto_k_raw = req_data.get("auto_k")
+            if auto_k_raw is None:
+                auto_k = self.get_argument("auto_k", "false").lower() in ("1", "true", "yes", "on")
+            else:
+                auto_k = bool(auto_k_raw)
+
             # Manual Ground-Truth labels persisted for this dataset (or passed in request)
             labels = req_data.get("labels")
             if not labels or not isinstance(labels, dict):
@@ -248,7 +255,8 @@ class AnalyzeHandler(BaseHandler):
                 power_threshold=power_threshold,
                 use_fhmm=use_fhmm,
                 max_states=max_states,
-                labels=labels
+                labels=labels,
+                auto_k=auto_k
             )
             self.write_json({"status": "success", "data": result})
         except ValueError as e:

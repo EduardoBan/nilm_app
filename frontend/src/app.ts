@@ -102,6 +102,14 @@ class NILMApp {
       if (clusterVal) clusterVal.textContent = clusterSlider.value;
     });
 
+    // MEJORA #6: Auto (K óptimo) — desactiva el slider y limpia la nota.
+    const autoKCheck = document.getElementById('chk-auto-k') as HTMLInputElement;
+    const autoKNote = document.getElementById('k-opt-note');
+    autoKCheck?.addEventListener('change', () => {
+      if (clusterSlider) clusterSlider.disabled = autoKCheck.checked;
+      if (autoKNote) autoKNote.hidden = true;
+    });
+
     const thresholdSlider = document.getElementById('slider-threshold') as HTMLInputElement;
     const thresholdVal = document.getElementById('val-threshold');
     thresholdSlider?.addEventListener('input', () => {
@@ -315,6 +323,9 @@ class NILMApp {
     const n_clusters = clusterSlider ? parseInt(clusterSlider.value, 10) : 4;
     const current_threshold = thresholdSlider ? parseFloat(thresholdSlider.value) : 2.0;
     const algorithm = (algoSelect ? algoSelect.value : 'kmeans') as any;
+    // MEJORA #6: selección automática de K (Silhouette / Davies-Bouldin).
+    const autoKCheck = document.getElementById('chk-auto-k') as HTMLInputElement | null;
+    const auto_k = !!(autoKCheck && autoKCheck.checked);
 
     this.showLoading(true);
     try {
@@ -325,11 +336,23 @@ class NILMApp {
         current_threshold,
         power_threshold: 1.0,
         use_fhmm: this.useFhmm,
-        max_states: 3
+        max_states: 3,
+        auto_k
       });
 
       this.updateApplianceTable();
       this.renderCurrentTabCharts();
+      // Nota del K propuesto junto al slider.
+      const autoNote = document.getElementById('k-opt-note');
+      const ks = this.analysis.k_selection;
+      if (autoNote) {
+        if (auto_k && ks && ks.candidates && ks.candidates.length) {
+          autoNote.textContent = `K óptimo: ${ks.k} (silhouette ${ks.silhouette ?? '–'} · DB ${ks.davies_bouldin ?? '–'})`;
+          autoNote.hidden = false;
+        } else {
+          autoNote.hidden = true;
+        }
+      }
       const mode = this.analysis.fhmm_enabled ? 'FHMM multi-estado' : 'ON/OFF binario';
       const warn = (this.analysis as any).warning;
       if (warn) this.showToast(warn, 'info');

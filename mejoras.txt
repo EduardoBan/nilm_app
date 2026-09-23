@@ -50,7 +50,12 @@ B. CLUSTERING Y DETECCION DE EVENTOS
 #6 Seleccion automatica de K
     Silhouette / Davies-Bouldin para proponer el numero optimo de
     equipos en vez de fijarlo el usuario (elbow automatico).
-    Impacto: MEDIO | Esfuerzo: BAJO | Estado: PENDIENTE
+    Impacto: MEDIO | Esfuerzo: BAJO | Estado: HECHA (2026-09-23)
+    _feature_frame() + _auto_select_k() (KMeans k=2..8, semilla 42;
+    Silhouette maximo, desempate Davies-Bouldin); analyze_dataset
+    auto_k=True devuelve 'k_selection' con candidatos; checkbox
+    "Auto (K optimo)" + nota junto al slider; parametro auto_k en
+    el servidor.
 
 #7 Change-point detection
     Sustituir/complementar los umbrales fijos de detect_events con
@@ -262,9 +267,10 @@ PowerQualityHandler (Tornado) + pestaña frontend.
   Verificado con scripts/_e2e_pq.py y scripts/_smoke_http.py (HTTP 200,
   66 KB, JSON estricto).
 =====================================================================
- FIN DEL REGISTRO DE MEJORAS (2026-09-23: #11 metrica de transiciones y
- #12 intervalos de confianza (seccion C), #14 anomalias sobre el residuo,
- #15 calidad por equipo y #16 coste economico por equipo;
+ FIN DEL REGISTRO DE MEJORAS (2026-09-23: #6 seleccion automatica de K,
+ #11 metrica de transiciones y #12 intervalos de confianza (seccion C),
+ #14 anomalias sobre el residuo, #15 calidad por equipo y
+ #16 coste economico por equipo;
  2026-09-22: #13 fugas/standby implementada;
  anterior 2026-09-21: firmas extendidas y calidad, hoy #20/#21)
 =====================================================================

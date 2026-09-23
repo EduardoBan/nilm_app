@@ -361,6 +361,23 @@ export interface NILMAnalysisResult {
   fhmm_enabled?: boolean;
   max_states?: number;
   multi_state_models?: Record<string, MultiStateModel>;
+  /* MEJORA #6: seleccion automatica de K (Silhouette/Davies-Bouldin) */
+  k_selection?: KSelection | null;
+}
+
+/* MEJORA #6: seleccion automatica de K */
+export interface KCandidate {
+  k: number;
+  silhouette: number;
+  davies_bouldin: number;
+}
+
+export interface KSelection {
+  k: number;
+  silhouette: number | null;
+  davies_bouldin: number | null;
+  candidates: KCandidate[];
+  method: string;
 }
 
 export interface AnalysisParams {
@@ -372,6 +389,8 @@ export interface AnalysisParams {
   /* Opción A: modelado multi-estado FHMM */
   use_fhmm: boolean;
   max_states: number;
+  /* MEJORA #6: selección automática de K (Silhouette/Davies-Bouldin) */
+  auto_k?: boolean;
 }
 
 /* MEJORA #9/#10: benchmark de algoritmos + estabilidad de umbrales (frontend-only) */

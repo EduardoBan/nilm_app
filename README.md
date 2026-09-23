@@ -94,6 +94,7 @@ Cuando NILMTK está disponible, el análisis devuelve los estados de potencia ag
 ## 🤖 Algoritmos de Inteligencia Artificial Disponibles
 
 - **K-Means Clustering**: Agrupamiento óptimo por centroides multidimensionales con inicialización k-means++. El vector de features incluye los **saltos armónicos transitorios** (`|ΔH3|, |ΔH5|, |ΔH7|`) junto a `|ΔP|, |ΔI|, THD, |ΔQ|`, lo que separa electrónica de potencia de motores desde el propio clustering (ver `mejoras.txt`, mejora #5).
+- **Selección automática de K (MEJORA #6)**: checkbox *⚡ Auto (K óptimo)* en el panel de análisis → `_auto_select_k()` barre KMeans con k = 2…8 (semilla fija 42) y propone el K de **mayor Silhouette** (empates resueltos por **menor Davies-Bouldin**); el informe `k_selection` expone el K propuesto, sus métricas y todos los candidatos, y una nota junto al slider muestra el resultado. Desactiva el slider manual y añade el parámetro `auto_k` en el servidor.
 - **Gaussian Mixture Models (GMM)**: Modelado probabilístico con matrices de covarianza para capturar cargas con variabilidad de régimen.
 - **DBSCAN**: Agrupamiento basado en densidad para identificar modos de operación atípicos o anomalías.
 - ** Adjustable Trip Threshold **: Interactive current transient sensitivity selector ($\Delta I$ from 0.5 A to 10 A).

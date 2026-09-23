@@ -77,6 +77,10 @@
           <input type="range" id="slider-clusters" min="2" max="6" value="4" step="1">
           <span id="val-clusters" class="slider-val">4</span>
         </div>
+        <label class="auto-k-label" title="MEJORA #6: Silhouette (máximo) + Davies-Bouldin (desempate) proponen el K óptimo">
+          <input type="checkbox" id="chk-auto-k"> ⚡ Auto (K óptimo)
+        </label>
+        <span id="k-opt-note" class="k-opt-note" hidden></span>
       </div>
 
       <div class="control-group">
@@ -610,6 +614,6 @@
   <div id="toast" class="toast"></div>
 
   <!-- Compiled TypeScript Application Bundle -->
-  <script src="dist/bundle.js?v=mejora12ci-20260923"></script>
+  <script src="dist/bundle.js?v=mejora6k-20260923"></script>
 </body>
 </html>

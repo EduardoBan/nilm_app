@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.mixture import GaussianMixture
-from sklearn.metrics import silhouette_score
+from sklearn.metrics import silhouette_score, davies_bouldin_score
 from sklearn.preprocessing import StandardScaler
 from typing import Dict, List, Any, Optional, Tuple
 from itertools import product as _cartesian_product
@@ -282,25 +282,16 @@ class NILMEngine:
         # (df_work has P_total/delta_P/delta_I/H_total; events has event rows).
         return df_work, events
 
-    def cluster_appliances(self, events: pd.DataFrame, 
-                           n_clusters: int = 4, 
-                           algorithm: str = "kmeans",
-                           custom_labels: dict = None) -> Tuple[pd.DataFrame, Dict[int, Any]]:
-        """
-        Applies Machine Learning clustering (K-Means, GMM, or DBSCAN)
-        on multi-dimensional electrical features.
-        Supports Ground-Truth manual label overrides for identified clusters.
-        """
-        if len(events) == 0:
-            events['cluster'] = []
-            events['machine_name'] = []
-            events['color'] = []
-            events['custom_label'] = []
-            return events, {}
+    @staticmethod
+    def _feature_frame(events):
+        """Vector de features estandarizado del clustering.
 
-        # Feature vector based on absolute magnitudes so that the turn-ON and
-        # turn-OFF transitions of the same machine (same size, opposite sign)
-        # cluster together.
+        Compartido por cluster_appliances y por la seleccion automatica de K
+        (MEJORA #6) para que ambos evaluen exactamente las mismas columnas.
+        Magnitudes absolutas para que los eventos ON y OFF del mismo equipo
+        caigan juntos; incluye armonicos transitorios (#5) y firmas
+        extendidas (#20).
+        """
         events['abs_delta_P'] = events['delta_P'].abs()
         events['abs_delta_I'] = events['delta_I'].abs()
         events['abs_delta_Q'] = events['delta_Q'].abs()
@@ -312,7 +303,7 @@ class NILMEngine:
             events[f'abs_delta_H{h_order}'] = (
                 events[h_col].abs() if h_col in events else 0.0
             )
-        # MEJORA #20: firmas extendidas en el vector de features —
+        # MEJORA #20: firmas extendidas en el vector de features:
         # Δcos(phi) transitorio (motor/resistencia/VFD), amortiguamiento del
         # arranque (pico/regimen, log1p para compactar su cola) y
         # concentracion de fase (~1/3 trifasico, ~1 monofasico).
@@ -329,8 +320,77 @@ class NILMEngine:
                     'abs_delta_H3', 'abs_delta_H5', 'abs_delta_H7',
                     'abs_delta_cosphi', 'feat_inrush', 'phase_concentration']
         X = events[features].fillna(0).values
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
+        return StandardScaler().fit_transform(X)
+
+    @staticmethod
+    def _auto_select_k(X_scaled, k_min=2, k_max=8):
+        """MEJORA #6: propone el numero de equipos (K) automaticamente.
+
+        Barre KMeans con k in [k_min, k_max] (semilla fija -> reproducible)
+        y elige el k de MAYOR Silhouette; los empates se resuelven con el
+        MENOR Davies-Bouldin. Devuelve un dict JSON-safe:
+        {k, silhouette, davies_bouldin, candidates, method}. Con menos de
+        4 eventos (o si todo falla) devuelve fallback k=2 sin candidatos.
+        """
+        try:
+            n = int(len(X_scaled))
+            lo = max(2, int(k_min))
+            hi = min(int(k_max), n - 1)
+            candidates = []
+            best = None  # (clave, k, silhouette, davies_bouldin)
+            if n >= 4 and hi >= lo:
+                for k in range(lo, hi + 1):
+                    try:
+                        labels = KMeans(n_clusters=k, random_state=42,
+                                        n_init=10).fit_predict(X_scaled)
+                        if len(set(int(l) for l in labels)) < 2:
+                            continue
+                        sil = float(silhouette_score(X_scaled, labels))
+                        db = float(davies_bouldin_score(X_scaled, labels))
+                    except Exception:
+                        continue
+                    candidates.append({
+                        'k': int(k),
+                        'silhouette': round(sil, 4),
+                        'davies_bouldin': round(db, 4),
+                    })
+                    clave = (sil, -db)
+                    if best is None or clave > best[0]:
+                        best = (clave, k, sil, db)
+            if best is None:
+                return {'k': 2, 'silhouette': None, 'davies_bouldin': None,
+                        'candidates': [],
+                        'method': 'Silhouette/Davies-Bouldin no aplicables '
+                                  '(pocos eventos); fallback k=2.'}
+            return {'k': int(best[1]),
+                    'silhouette': round(best[2], 4),
+                    'davies_bouldin': round(best[3], 4),
+                    'candidates': candidates,
+                    'method': 'Silhouette maximo + Davies-Bouldin de '
+                              'desempate (KMeans, semilla 42).'}
+        except Exception:
+            return {'k': 2, 'silhouette': None, 'davies_bouldin': None,
+                    'candidates': [], 'method': 'fallback (error interno).'}
+
+    def cluster_appliances(self, events: pd.DataFrame, 
+                           n_clusters: int = 4, 
+                           algorithm: str = "kmeans",
+                           custom_labels: dict = None) -> Tuple[pd.DataFrame, Dict[int, Any]]:
+        """
+        Applies Machine Learning clustering (K-Means, GMM, or DBSCAN)
+        on multi-dimensional electrical features.
+        Supports Ground-Truth manual label overrides for identified clusters.
+        """
+        if len(events) == 0:
+            events['cluster'] = []
+            events['machine_name'] = []
+            events['color'] = []
+            events['custom_label'] = []
+            return events, {}
+
+        # Vector de features compartido con la seleccion automatica de K
+        # (MEJORA #6): ver _feature_frame().
+        X_scaled = self._feature_frame(events)
 
         n_samples = len(events)
         # Auto-reduce K cuando hay menos eventos que clusters pedidos
@@ -1956,7 +2016,8 @@ class NILMEngine:
                         power_threshold: float = 1.0,
                         use_fhmm: bool = False,
                         max_states: int = 3,
-                        labels: dict = None) -> Dict[str, Any]:
+                        labels: dict = None,
+                        auto_k: bool = False) -> Dict[str, Any]:
         """
         Executes full NILM pipeline and returns structured JSON-ready results.
         """
@@ -1968,10 +2029,20 @@ class NILMEngine:
 
         nilmtk_states = self.estimate_nilmtk_power_states(df_work)
         
+        # MEJORA #6: seleccion automatica de K (Silhouette/Davies-Bouldin)
+        # antes de agrupar; requested_k conserva el valor pedido por el usuario.
+        requested_k = int(n_clusters)
+        k_selection: Dict[str, Any] = {}
+        if auto_k and len(events) >= 4:
+            try:
+                k_selection = self._auto_select_k(self._feature_frame(events))
+                if int(k_selection.get('k') or 0) >= 1:
+                    n_clusters = int(k_selection['k'])
+            except Exception:
+                k_selection = {}
         events_clustered, cluster_info = self.cluster_appliances(
             events, n_clusters=n_clusters, algorithm=algorithm, custom_labels=labels
         )
-        requested_k = int(n_clusters)
         n_clusters = len(cluster_info)
         n_on_total = int((events['event_type'] == 'ON').sum()) if len(events) else 0
         if n_on_total == 0:
@@ -2109,6 +2180,7 @@ class NILMEngine:
             "nilmtk_available": self.nilmtk_available,
             "nilmtk_power_states_kw": [round(state, 2) for state in nilmtk_states],
             "n_clusters": n_clusters,
+            "k_selection": k_selection,
             "total_events_detected": len(events_clustered),
             "warning": warning,
             "timestamps": timestamps_sampled,

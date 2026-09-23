@@ -737,3 +737,42 @@ def test_validation_report_exposes_confidence():
     m = bc["confusion_global"]["f1"]
     assert m["lo"] - 0.01 <= point <= m["hi"] + 0.01
     json.dumps(val, allow_nan=False)
+
+
+def test_auto_select_k_prefers_max_silhouette():
+    """MEJORA #6: barre k, elige silhouette maximo (desempate DB) y es JSON-safe."""
+    rng = np.random.default_rng(3)
+    a = rng.normal(0.0, 0.1, (12, 2))
+    b = rng.normal(6.0, 0.1, (12, 2))
+    X = np.vstack([a, b])
+    sel = NILMEngine._auto_select_k(X, k_min=2, k_max=6)
+    assert sel["k"] == 2
+    cands = sel["candidates"]
+    assert [c["k"] for c in cands] == list(range(2, 7))
+    # El k elegido es el de mayor silhouette (empates: menor Davies-Bouldin).
+    best = max(cands, key=lambda c: (c["silhouette"], -c["davies_bouldin"]))
+    assert best["k"] == sel["k"]
+    assert sel["silhouette"] == best["silhouette"]
+    assert sel["method"]
+    json.dumps(sel, allow_nan=False)
+    # Pocos eventos -> fallback k=2 sin candidatos (sin division por cero).
+    tiny = NILMEngine._auto_select_k(np.zeros((3, 2)))
+    assert tiny["k"] == 2 and tiny["candidates"] == []
+
+
+def test_analyze_dataset_auto_k_exposes_selection():
+    """MEJORA #6: auto_k propone K y el informe expone k_selection."""
+    eng = NILMEngine(_FakeDM(make_df_harm()))
+    res = eng.analyze_dataset("synthetic", n_clusters=4, auto_k=True,
+                              use_fhmm=False, power_threshold=0.5,
+                              current_threshold=2.0)
+    ks = res.get("k_selection")
+    assert ks, "auto_k=True debe devolver 'k_selection'"
+    assert ks["candidates"] and all(c["k"] >= 2 for c in ks["candidates"])
+    assert 1 <= ks["k"] <= 8
+    assert res["n_clusters"] >= 1
+    json.dumps(ks, allow_nan=False)
+    # Sin auto_k no se calcula el informe.
+    res2 = eng.analyze_dataset("synthetic", n_clusters=4, auto_k=False,
+                               power_threshold=0.5, current_threshold=2.0)
+    assert res2.get("k_selection") == {}

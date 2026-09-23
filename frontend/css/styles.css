@@ -1471,3 +1471,24 @@ body {
 #pq-checks .val-card { display: flex; flex-direction: column; gap: 4px; }
 #pq-checks .val-card small { opacity: 0.75; }
 #pq-checks .val-card em { opacity: 0.6; font-size: 0.85em; font-style: normal; }
+
+/* MEJORA #6: seleccion automatica de K (Silhouette / Davies-Bouldin) */
+.auto-k-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.auto-k-label input {
+  accent-color: #F59E0B;
+  cursor: pointer;
+}
+.k-opt-note {
+  font-size: 0.78rem;
+  color: #10B981;
+  white-space: nowrap;
+}
