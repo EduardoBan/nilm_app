@@ -109,7 +109,10 @@ D. NUEVOS ANALISIS DE VALOR
     Ya hay THD y H3/H5/H7 por maquina: aportar costo de distorsion
     (kVA demandado vs kW) y desbalance de fases por equipo (I L1/L2/L3
     existen en el dataset).
-    Impacto: MEDIO | Esfuerzo: MEDIO | Estado: PENDIENTE
+    Impacto: MEDIO | Esfuerzo: MEDIO | Estado: HECHA (2026-09-23) —
+    avg_delta_s/dist_kva/dist_ratio/phase_imbalance por equipo (IEEE 1459
+    D = S·THD/√(1+THD²)); columnas kVA distorsion y Desbalance en tabla
+    y fichas; tipos TS extendidos; bundle v=mejora15-20260923.
 
 #16 Coste economico por equipo
     Cruzar la energia desagregada con tarifa horaria -> EUR/mes por
@@ -254,7 +257,8 @@ PowerQualityHandler (Tornado) + pestaña frontend.
   Verificado con scripts/_e2e_pq.py y scripts/_smoke_http.py (HTTP 200,
   66 KB, JSON estricto).
 =====================================================================
- FIN DEL REGISTRO DE MEJORAS (2026-09-23: #16 coste economico por equipo;
+ FIN DEL REGISTRO DE MEJORAS (2026-09-23: #15 calidad por equipo y
+ #16 coste economico por equipo;
  2026-09-22: #13 fugas/standby implementada;
  anterior 2026-09-21: #11 y #12 implementadas)
 =====================================================================

@@ -230,6 +230,93 @@ def test_harmonic_signatures_expose_extended_features():
         assert 0.2 <= stat["avg_inrush"] <= 20.0
 
 
+def test_distortion_and_imbalance_per_machine():
+    """MEJORA #15: distorsion (kVA D/S) y desbalance por equipo.
+
+    - Un equipo con THD alto debe dar dist_ratio >> 0 y dist_kva > 0,
+      coherente con su kVA de salto (0 <= D <= S).
+    - Un equipo con THD ~ 0 debe dar dist_kva ~= 0 y dist_ratio ~= 0.
+    - Con el dataset mixto (escalon monofasico + escalon trifasico),
+      el equipo monofasico debe tener phase_imbalance mayor que el
+      equilibrado.
+    - Ambos caminos de desagregacion (eventos y FHMM) exponen los 4 campos.
+    """
+    eng = NILMEngine(_FakeDM(make_df_extended()))
+    res = eng.analyze_dataset("synthetic", n_clusters=2, power_threshold=0.5,
+                              current_threshold=2.0)
+    stats = res["machine_statistics"]
+    assert len(stats) == 2
+    for stat in stats:
+        assert set(stat) >= {"avg_delta_s", "dist_kva", "dist_ratio",
+                             "phase_imbalance"}
+        assert stat["avg_delta_s"] > 0.0
+        assert 0.0 <= stat["dist_kva"] <= stat["avg_delta_s"] * 1.001
+        assert 0.0 <= stat["dist_ratio"] <= 1.0
+        assert 0.0 <= stat["phase_imbalance"] <= 2.0
+
+    imb = [s["phase_imbalance"] for s in stats]
+    assert max(imb) > min(imb), \
+        "el equipo monofasico debe desbalancear mas que el equilibrado"
+
+    # Consistencia THD -> dist_ratio: a mas THD, mas fraccion D/S.
+    by_thd = sorted(stats, key=lambda s: s["thd_pct"])
+    assert by_thd[-1]["dist_ratio"] >= by_thd[0]["dist_ratio"]
+
+    if hmmlearn_available:
+        res_f = eng.analyze_dataset("synthetic", n_clusters=2, use_fhmm=True,
+                                    max_states=2, power_threshold=0.5,
+                                    current_threshold=2.0)
+        for stat in res_f["machine_statistics"]:
+            assert set(stat) >= {"avg_delta_s", "dist_kva", "dist_ratio",
+                                 "phase_imbalance"}
+            assert 0.0 <= stat["dist_kva"] <= stat["avg_delta_s"] * 1.001
+            assert 0.0 <= stat["dist_ratio"] <= 1.0
+
+
+def test_distortion_synthetic_thd_extremes():
+    """MEJORA #15: el coste de distorsion responde al THD de forma cerrada.
+
+    Dos equipos conocidos: uno con THD=100% (debe dar
+    dist_ratio = 1/sqrt(2) ~= 0.707) y otro con THD=0% (dist_kva = 0).
+    Verifica la formula D = S * THD/sqrt(1+THD^2) contra valores exactos.
+    """
+    rng = np.random.default_rng(15)
+    n = 24
+    ts = pd.date_range("2024-01-01", periods=n, freq="1h")
+    events = pd.DataFrame({
+        "timestamp": list(ts) * 2,
+        "cluster": [0] * n + [1] * n,
+        "event_type": ["ON"] * (2 * n),
+        # Ruido pequeno para que KMeans/GMM no colapsen por varianza nula
+        # (StandardScaler divide por la desviacion de cada feature).
+        "delta_P": [5.0] * n + [5.0] * n,
+        "delta_Q": [0.0] * (2 * n),
+        "delta_S": [5.0] * n + [5.0] * n,
+        "delta_I": list(10.0 + rng.normal(0, 0.05, n)) * 2,
+        "THD_avg": [100.0] * n + [0.0] * n,
+        "V_avg": [230.0] * (2 * n),
+        "delta_H3": [0.0] * (2 * n),
+        "delta_H5": [0.0] * (2 * n),
+        "delta_H7": [0.0] * (2 * n),
+        "harm_ratio_pct": [0.0] * (2 * n),
+        "cosphi_avg": [0.9] * (2 * n),
+        "inrush_ratio": [1.0] * (2 * n),
+        "phase_concentration": [1.0 / 3.0] * (2 * n),
+    })
+    eng = NILMEngine(_FakeDM())
+    clustered, info = eng.cluster_appliances(events, n_clusters=2,
+                                             algorithm="kmeans")
+    assert set(info) >= {0, 1}
+    hi = info[0] if info[0]["avg_thd"] > info[1]["avg_thd"] else info[1]
+    lo = info[1] if hi is info[0] else info[0]
+    # THD=100% -> D/S = 1/sqrt(2); kVA de salto 5 -> D ~= 3.536 kVA.
+    assert abs(hi["dist_ratio"] - 1.0 / np.sqrt(2.0)) < 0.02
+    assert abs(hi["dist_kva"] - 5.0 / np.sqrt(2.0)) < 0.1
+    # THD=0% -> sin distorsion.
+    assert lo["dist_kva"] == 0.0
+    assert lo["dist_ratio"] == 0.0
+
+
 def test_fhmm_exact_viterbi_product_states():
     """PASO 2: FHMM exacto sobre el producto cartesiano de estados."""
     eng = NILMEngine(_FakeDM(make_df_harm()))

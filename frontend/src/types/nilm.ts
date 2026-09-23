@@ -86,6 +86,11 @@ export interface MachineStat {
   /* MEJORA #16: coste economico (tarifa horaria) */
   cost_eur?: number;
   cost_month_eur?: number;
+  /* MEJORA #15: calidad de energia por equipo (kVA/distorsion/desbalance) */
+  avg_delta_s?: number;
+  dist_kva?: number;
+  dist_ratio?: number;
+  phase_imbalance?: number;
 }
 
 export interface MachineStateInfo {

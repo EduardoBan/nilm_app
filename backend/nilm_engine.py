@@ -172,6 +172,7 @@ class NILMEngine:
         # Step differences (deltas)
         df_work['delta_P'] = df_work['P_total'].diff().fillna(0)
         df_work['delta_Q'] = df_work['Q_total'].diff().fillna(0)
+        df_work['delta_S'] = df_work['S_total'].diff().fillna(0)
         df_work['delta_I'] = df_work['I_total'].diff().fillna(0)
         df_work['delta_H'] = df_work['H_total'].diff().fillna(0)
         df_work['delta_THD'] = df_work['THD_avg'].diff().fillna(0)
@@ -382,6 +383,44 @@ class NILMEngine:
             avg_i = float(sub['delta_I'].abs().mean())
             avg_q = float(sub['delta_Q'].abs().mean()) if 'delta_Q' in sub else 0.0
             avg_thd = float(sub['THD_avg'].mean())
+            # MEJORA #15: potencia aparente del salto (kVA) e intensidad
+            # aparente por fase: base del coste de distorsion y del
+            # desbalance por equipo. delta_S prefiere la columna ya
+            # calculada; si no existe se aproxima con V_nom * |delta_I|.
+            if 'delta_S' in sub:
+                avg_s = float(sub['delta_S'].abs().mean())
+            elif 'delta_I' in sub:
+                v_nom = float(sub['V_avg'].mean()) if 'V_avg' in sub else 230.0
+                avg_s = float(v_nom * sub['delta_I'].abs().mean() / 1000.0)
+            else:
+                avg_s = 0.0
+            # Desbalance por equipo (extension de phase_concentration a los
+            # tres pasos de fase): dispersion relativa de |delta_I L1..L3|
+            # en el instante del evento (0 = equilibrado, ->1 = monofasico).
+            phase_step_cols = [
+                c for c in ('delta_I_L1', 'delta_I_L2', 'delta_I_L3')
+                if c in sub.columns
+            ]
+            if len(phase_step_cols) >= 2:
+                steps = sub[phase_step_cols].abs().to_numpy(dtype=float)
+                col_mean = np.nanmean(steps, axis=1, keepdims=True)
+                with np.errstate(invalid='ignore', divide='ignore'):
+                    row_cv = np.nanmean(
+                        np.abs(steps - col_mean)
+                        / np.where(col_mean > 1e-9, col_mean, np.nan),
+                        axis=1,
+                    )
+                row_cv = np.nan_to_num(row_cv, nan=0.0, posinf=0.0, neginf=0.0)
+                avg_phase_imb = float(np.clip(np.nanmean(row_cv), 0.0, 2.0)) \
+                    if row_cv.size else 0.0
+            elif 'phase_concentration' in sub:
+                # Fallback sin columnas de fase: mapea la concentracion
+                # (~1/3 trifasico, ~1 monofasico) a un indice 0..1.
+                conc = float(sub['phase_concentration'].mean())
+                avg_phase_imb = float(np.clip((conc - 1.0 / 3.0)
+                                              / (1.0 - 1.0 / 3.0), 0.0, 1.0))
+            else:
+                avg_phase_imb = 0.0
 
             # PASO 1: firma armonica transitoria del equipo (ΔH3/ΔH5/ΔH7 y
             # ratio ΔH/ΔI en %). Un VFD/rectificador presenta ΔH alto con ΔP
@@ -407,6 +446,17 @@ class NILMEngine:
                 phase_type = "Asimétrico (2 fases)"
             else:
                 phase_type = "Trifásico equilibrado"
+
+            # MEJORA #15: coste de distorsion por equipo. Del THD de
+            # corriente: I_dist = I_rms * THD/sqrt(1+THD^2) (IEEE 1459) y
+            # la potencia de distorsion D = V * I_dist actua como kVA
+            # "fantasma" que dimensiona trafo/cables sin producir kW.
+            # El ratio D/S del salto indica que fraccion de la potencia
+            # aparente del equipo es distorsion (0..1).
+            thd_frac = max(0.0, avg_thd) / 100.0
+            dist_frac = thd_frac / np.sqrt(1.0 + thd_frac ** 2)
+            dist_kva = float(avg_s * dist_frac)
+            dist_ratio = float(np.clip(dist_frac, 0.0, 1.0))
 
             load_class = self._classify_load_class(
                 avg_p, avg_i, avg_thd, avg_harm_ratio, harm_sum,
@@ -465,6 +515,10 @@ class NILMEngine:
                 "avg_cosphi": round(avg_cosphi, 3),
                 "avg_inrush": round(avg_inrush, 2),
                 "phase_type": phase_type,
+                "avg_delta_s": round(avg_s, 3),
+                "dist_kva": round(dist_kva, 3),
+                "dist_ratio": round(dist_ratio, 3),
+                "phase_imbalance": round(avg_phase_imb, 3),
                 "load_class": load_class,
                 "count": len(sub),
                 "on_count": int((sub['event_type'] == 'ON').sum()),
@@ -674,7 +728,12 @@ class NILMEngine:
                 "avg_cosphi": round(float(info.get('avg_cosphi', 0.0)), 3),
                 "avg_inrush": round(float(info.get('avg_inrush', 1.0)), 2),
                 "phase_type": info.get('phase_type', 'Trifásico equilibrado'),
-                "load_class": info.get('load_class', 'Desconocido')
+                "load_class": info.get('load_class', 'Desconocido'),
+                # MEJORA #15: kVA del salto, distorsion y desbalance.
+                "avg_delta_s": round(float(info.get('avg_delta_s', 0.0)), 3),
+                "dist_kva": round(float(info.get('dist_kva', 0.0)), 3),
+                "dist_ratio": round(float(info.get('dist_ratio', 0.0)), 3),
+                "phase_imbalance": round(float(info.get('phase_imbalance', 0.0)), 3)
             })
 
         return disagg_power, baseline_curve, timeline_events, machine_stats
@@ -919,6 +978,11 @@ class NILMEngine:
             "avg_cosphi": round(float(info.get('avg_cosphi', 0.0)), 3),
             "avg_inrush": round(float(info.get('avg_inrush', 1.0)), 2),
             "phase_type": info.get('phase_type', 'Trifásico equilibrado'),
+            # MEJORA #15: kVA del salto, distorsion y desbalance (FHMM).
+            "avg_delta_s": round(float(info.get('avg_delta_s', 0.0)), 3),
+            "dist_kva": round(float(info.get('dist_kva', 0.0)), 3),
+            "dist_ratio": round(float(info.get('dist_ratio', 0.0)), 3),
+            "phase_imbalance": round(float(info.get('phase_imbalance', 0.0)), 3),
             "custom_label": bool(info.get('custom_label', False))
         })
 

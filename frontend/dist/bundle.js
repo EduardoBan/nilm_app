@@ -2053,8 +2053,10 @@ class NILMApp {
         <td>${m.peak_current_a.toFixed(1)} A</td>
         <td>${m.avg_inrush != null ? '×' + m.avg_inrush.toFixed(1) : '--'}</td>
         <td>${m.thd_pct.toFixed(1)} %</td>
+        <td>${m.dist_kva != null ? m.dist_kva.toFixed(2) + ' kVA' : '--'}${m.dist_ratio != null ? `<br><small title="Fracción D/S del salto">${(m.dist_ratio * 100).toFixed(0)}% D/S</small>` : ''}</td>
         <td>${m.avg_cosphi != null && m.avg_cosphi > 0 ? m.avg_cosphi.toFixed(3) : '--'}</td>
         <td>${m.phase_type ? escapeHtml(m.phase_type) : '--'}</td>
+        <td>${m.phase_imbalance != null ? (m.phase_imbalance * 100).toFixed(0) + ' %' : '--'}</td>
         <td>${m.event_count} arranques</td>
         <td>${m.active_minutes.toFixed(0)} min</td>
         <td><strong>${m.energy_kwh.toFixed(2)} kWh</strong></td>
@@ -2297,6 +2299,10 @@ class NILMApp {
             <span class="mc-stat-val">${m.thd_pct.toFixed(1)} %</span>
           </div>
           <div class="mc-stat">
+            <span class="mc-stat-label">Potencia de distorsión</span>
+            <span class="mc-stat-val">${m.dist_kva != null ? m.dist_kva.toFixed(2) + ' kVA' : '--'}${m.dist_ratio != null ? ` (${(m.dist_ratio * 100).toFixed(0)}% D/S)` : ''}</span>
+          </div>
+          <div class="mc-stat">
             <span class="mc-stat-label">Ratio de Inrush</span>
             <span class="mc-stat-val">${m.avg_inrush != null ? '×' + m.avg_inrush.toFixed(1) : '--'}</span>
           </div>
@@ -2307,6 +2313,10 @@ class NILMApp {
           <div class="mc-stat">
             <span class="mc-stat-label">Tipo de Fase</span>
             <span class="mc-stat-val">${m.phase_type ? escapeHtml(m.phase_type) : '--'}</span>
+          </div>
+          <div class="mc-stat">
+            <span class="mc-stat-label">Desbalance de fases</span>
+            <span class="mc-stat-val">${m.phase_imbalance != null ? (m.phase_imbalance * 100).toFixed(0) + ' %' : '--'}</span>
           </div>
           <div class="mc-stat">
             <span class="mc-stat-label">Total Arranques</span>
