@@ -71,6 +71,7 @@ Cuando NILMTK está disponible, el análisis devuelve los estados de potencia ag
 6. **Fichas Técnicas y Reparto Energético**:
    - Potencia nominal estimada por equipo (kW), corriente de arranque (A), factor de distorsión THD (%), energía total consumida (kWh) y porcentaje de participación en la factura eléctrica.
    - **Rasgos extendidos (MEJORA #20)**: ratio de inrush (×), cos φ medio y tipo de fase (*Monofásico (1 fase)* / *Asimétrico (2 fases)* / *Trifásico equilibrado*), presentes tanto en la tabla resumen como en las fichas técnicas de cada equipo.
+   - **Coste económico (MEJORA #16)**: EUR por equipo y por turno con tarifa horaria (periodos valle/llano/punta del 2.0TD peninsular, ejemplo editable en `NILMEngine.DEFAULT_TARIFF`), proyección a EUR/mes y coste del residuo/standby; columna "Coste (€)" en la tabla y bloque resumen en la pestaña Equipos.
 7. **Firma Armónica Transitoria por Equipo (ΔH3 / ΔH5 / ΔH7)**:
    - Barras agrupadas con el salto medio de corriente armónica por orden en el instante de arranque de cada equipo, más un plano $\Delta H_5$ vs $|\Delta P|$ por evento.
    - Permite discriminar **electrónica de potencia** (ΔH alto con ΔP modesto, arriba-izquierda) de **motores de arranque directo** (ΔP alto con ΔH bajo, abajo-derecha), incluso antes de mirar el THD en régimen permanente.

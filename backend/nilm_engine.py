@@ -1298,6 +1298,187 @@ class NILMEngine:
         except Exception:
             return {}
 
+    # ------------------------------------------------------------------
+    # MEJORA #16: coste economico por equipo (tarifa horaria).
+    # Cruza la energia desagregada con una tarifa por periodos
+    # (valle/llano/punta del 2.0TD peninsular por defecto, editable via
+    # el parametro tariff) y desglosa el gasto por equipo, por periodo
+    # y por turno (manana/tarde/noche). Sin dependencias nuevas.
+    # ------------------------------------------------------------------
+    # Tarifa de ejemplo en EUR/kWh. Reglas 2.0TD peninsular: punta
+    # 10:00-14:00 y 18:00-22:00 (laborables); llano 08:00-10:00,
+    # 14:00-18:00 y 22:00-24:00 (laborables); valle 00:00-08:00
+    # (laborables) y todo el fin de semana.
+    DEFAULT_TARIFF = {
+        "name": "2.0TD peninsula (ejemplo editable)",
+        "currency": "EUR",
+        "rates_eur_kwh": {"valle": 0.0769, "llano": 0.1233, "punta": 0.1641},
+    }
+
+    @staticmethod
+    def _cost_report(df_work, disagg_power, baseline_curve, cluster_info,
+                     tariff=None):
+        """Coste EUR de la energia desagregada por tarifa horaria.
+
+        Devuelve dict JSON-safe con la tarifa aplicada, horas cubiertas,
+        desglose por periodo (valle/llano/punta), por turno (manana/
+        tarde/noche), por equipo (con proyeccion mensual), el coste del
+        residuo (standby) y el total. Dict vacio si faltan timestamps
+        o la serie es demasiado corta.
+        """
+        try:
+            tariff = dict(tariff) if tariff else dict(NILMEngine.DEFAULT_TARIFF)
+            rates = dict(tariff.get('rates_eur_kwh') or {})
+            for k in ('valle', 'llano', 'punta'):
+                rates.setdefault(k, 0.0)
+                rates[k] = float(rates[k])
+
+            if 'timestamp' not in df_work.columns:
+                return {}
+            ts = pd.to_datetime(df_work['timestamp'], errors='coerce')
+            n = len(df_work)
+            if n < 2 or int(ts.notna().sum()) < 2:
+                return {}
+            dt_h = ts.diff().dt.total_seconds().fillna(0).to_numpy(dtype=float) \
+                / 3600.0
+            dt_h = np.clip(dt_h, 0.0, None)
+            if float(dt_h.sum()) <= 0:
+                step_h = float(ts.dropna().diff().dt.total_seconds().median()
+                               / 3600.0)
+                if not (step_h > 0 and np.isfinite(step_h)):
+                    return {}
+                dt_h = np.full(n, step_h)
+            hours_covered = float(dt_h.sum())
+            if hours_covered <= 0:
+                return {}
+
+            def _clean(a):
+                return np.clip(np.nan_to_num(np.asarray(a, dtype=float),
+                                             nan=0.0, posinf=0.0, neginf=0.0),
+                               0.0, None)
+
+            # Las curvas deben alinearse con df_work (misma convencion
+            # estricta que _standby_report).
+            if len(baseline_curve) != n or \
+                    any(len(_clean(a)) != n for a in disagg_power.values()):
+                return {}
+
+            # Mascara de periodo tarifario (particion muestr a muestra).
+            hours = ts.dt.hour.to_numpy()
+            dow = ts.dt.dayofweek.to_numpy()  # 0=lunes ... 6=domingo
+            weekend = dow >= 5
+            m_valle = weekend | (hours < 8)
+            m_punta = (~weekend) & (((hours >= 10) & (hours < 14))
+                                    | ((hours >= 18) & (hours < 22)))
+            m_llano = (~m_valle) & (~m_punta)
+
+            # Potencia total: P_total si existe, si no la suma de
+            # equipos + residuo (misma convencion que el pipeline).
+            if 'P_total' in df_work.columns:
+                p_total = _clean(df_work['P_total'].to_numpy())
+            else:
+                p_total = np.zeros(n)
+                for arr in disagg_power.values():
+                    a = _clean(arr)
+                    if len(a) == n:
+                        p_total += a
+                b = _clean(baseline_curve)
+                if len(b) == n:
+                    p_total += b
+
+            # Coste por muestra (EUR) = P[kW] x dt[h] x tarifa[hora].
+            rate_arr = np.zeros(n)
+            rate_arr[m_valle] = rates['valle']
+            rate_arr[m_llano] = rates['llano']
+            rate_arr[m_punta] = rates['punta']
+            cost_arr = p_total * dt_h * rate_arr
+            month_factor = 730.0 / hours_covered  # 8760 h / 12 meses
+
+            periods = []
+            for pname, mask in (('valle', m_valle), ('llano', m_llano),
+                                ('punta', m_punta)):
+                e = float(np.sum(p_total[mask] * dt_h[mask]))
+                periods.append({
+                    'period': pname,
+                    'hours': round(float(dt_h[mask].sum()), 2),
+                    'energy_kwh': round(e, 3),
+                    'cost_eur': round(float(np.sum(cost_arr[mask])), 2),
+                })
+
+            # Turnos: manana 06-14, tarde 14-22, noche 22-06.
+            m_manana = (hours >= 6) & (hours < 14)
+            m_tarde = (hours >= 14) & (hours < 22)
+            m_noche = (~m_manana) & (~m_tarde)
+            shifts = []
+            for sname, mask in (('manana', m_manana), ('tarde', m_tarde),
+                                ('noche', m_noche)):
+                e = float(np.sum(p_total[mask] * dt_h[mask]))
+                shifts.append({
+                    'shift': sname,
+                    'hours': round(float(dt_h[mask].sum()), 2),
+                    'energy_kwh': round(e, 3),
+                    'cost_eur': round(float(np.sum(cost_arr[mask])), 2),
+                })
+
+            machines = []
+            for c in sorted(disagg_power.keys()):
+                p = _clean(disagg_power[c])
+                if len(p) != n:
+                    continue
+                e = float(np.sum(p * dt_h))
+                ce = float(np.sum(p * dt_h * rate_arr))
+                info = (cluster_info or {}).get(c, {})
+                machines.append({
+                    'id': c,
+                    'name': str(info.get('name', f'Equipo {c}')),
+                    'color': str(info.get('color', '#888888')),
+                    'energy_kwh': round(e, 3),
+                    'cost_eur': round(ce, 2),
+                    'cost_month_eur': round(ce * month_factor, 2),
+                })
+
+            res_e, res_c = 0.0, 0.0
+            b = _clean(baseline_curve)
+            if len(b) == n:
+                res_e = float(np.sum(b * dt_h))
+                res_c = float(np.sum(b * dt_h * rate_arr))
+
+            total_e = float(np.sum(p_total * dt_h))
+            total_c = float(np.sum(cost_arr))
+            for m in machines:
+                m['cost_share_pct'] = round(
+                    m['cost_eur'] / total_c * 100.0, 1) if total_c > 0 \
+                    else 0.0
+
+            return {
+                'tariff': {
+                    'name': str(tariff.get('name', 'tarifa personalizada')),
+                    'currency': str(tariff.get('currency', 'EUR')),
+                    'rates_eur_kwh': {k: round(v, 4)
+                                      for k, v in rates.items()},
+                },
+                'hours_covered': round(hours_covered, 2),
+                'periods': periods,
+                'shifts': shifts,
+                'machines': machines,
+                'residual': {
+                    'energy_kwh': round(res_e, 3),
+                    'cost_eur': round(res_c, 2),
+                    'cost_month_eur': round(res_c * month_factor, 2),
+                },
+                'total': {
+                    'energy_kwh': round(total_e, 3),
+                    'cost_eur': round(total_c, 2),
+                    'cost_month_eur': round(total_c * month_factor, 2),
+                },
+                'method': 'Energia desagregada x tarifa horaria por periodos '
+                          '(2.0TD: punta 10-14/18-22, llano 08-10/14-18/22-24, '
+                          'valle 00-08 y fines de semana); turnos 06-14/14-22/'
+                          '22-06; proyeccion mensual = coste x 730 h / horas.',
+            }
+        except Exception:
+            return {}
+
     def _validate_reconstruction_error(self, df_work, disagg_power, baseline_curve) -> Dict[str, Any]:
         """PASO 3: error de reconstruccion global (MAE/RMSE/MAPE) y porcentaje
         de energia explicada por baseline + suma de curvas desagregadas."""
@@ -1578,6 +1759,19 @@ class NILMEngine:
             if 'P_total' in df_work.columns else np.zeros(n)
         standby = self._standby_report(df_work, p_full, baseline_curve)
 
+        # MEJORA #16: coste economico por equipo con tarifa horaria
+        # (periodos 2.0TD + turnos). Se enriquece cada machine_stat con
+        # su coste para que la tabla/ficha no tenga que recalcularlo.
+        cost_report = self._cost_report(df_work, disagg_power,
+                                        baseline_curve, cluster_info)
+        if cost_report:
+            cost_by_id = {m['id']: m for m in cost_report.get('machines', [])}
+            for stat in machine_stats:
+                mc = cost_by_id.get(stat.get('id'))
+                if mc:
+                    stat['cost_eur'] = mc['cost_eur']
+                    stat['cost_month_eur'] = mc['cost_month_eur']
+
         return {
             "dataset_id": dataset_id,
             "algorithm": algorithm,
@@ -1600,6 +1794,7 @@ class NILMEngine:
             "fhmm_exact": fhmm_exact,
             "validation": validation,
             "standby": standby,
+            "cost": cost_report,
             "fhmm_enabled": use_fhmm,
             "multi_state_models": {
                 str(c): {

@@ -203,12 +203,13 @@
                 <th>N° Arranques</th>
                 <th>Tiempo de Uso</th>
                 <th>Consumo (kWh)</th>
+                <th>Coste (€)</th>
                 <th>% Participación</th>
                 <th>Estado</th>
               </tr>
             </thead>
             <tbody id="appliances-table-body">
-              <tr><td colspan="14" style="text-align:center; padding: 20px;">Cargando análisis NILM...</td></tr>
+              <tr><td colspan="15" style="text-align:center; padding: 20px;">Cargando análisis NILM...</td></tr>
             </tbody>
           </table>
         </div>
@@ -224,6 +225,8 @@
             <p class="card-subtitle">Parámetros eléctricos deducidos por el modelo de IA · Renombra cada equipo con ✏️ (etiqueta Ground Truth persistida) · Clasificación por armónicos transitorios</p>
           </div>
         </div>
+        <!-- MEJORA #16: resumen de coste energetico (tarifa horaria) -->
+        <div id="cost-summary" class="cost-summary" style="display:none;"></div>
         <div id="machines-cards-container" class="machines-grid"></div>
       </div>
     </section>
@@ -589,6 +592,6 @@
   <div id="toast" class="toast"></div>
 
   <!-- Compiled TypeScript Application Bundle -->
-  <script src="dist/bundle.js?v=mejora13-20260922"></script>
+  <script src="dist/bundle.js?v=mejora16-20260923"></script>
 </body>
 </html>

@@ -83,6 +83,9 @@ export interface MachineStat {
   avg_cosphi?: number;
   avg_inrush?: number;
   phase_type?: string;
+  /* MEJORA #16: coste economico (tarifa horaria) */
+  cost_eur?: number;
+  cost_month_eur?: number;
 }
 
 export interface MachineStateInfo {
@@ -279,6 +282,8 @@ export interface NILMAnalysisResult {
   validation?: ValidationReport | null;
   /* MEJORA #13: fugas / standby a partir del residuo (baseline) */
   standby?: StandbyReport | null;
+  /* MEJORA #16: coste economico por equipo (tarifa horaria) */
+  cost?: CostReport | null;
   /* Opción A: modelado multi-estado FHMM */
   fhmm_enabled?: boolean;
   max_states?: number;
@@ -323,6 +328,42 @@ export interface BenchmarkResult {
   re_mean_stab: number;
   re_std_stab: number;
   best: BenchmarkRow | null;
+}
+
+/* MEJORA #16: coste economico por equipo (tarifa horaria por periodos + turnos) */
+export interface CostPeriod {
+  period: string;
+  hours: number;
+  energy_kwh: number;
+  cost_eur: number;
+}
+
+export interface CostShift {
+  shift: string;
+  hours: number;
+  energy_kwh: number;
+  cost_eur: number;
+}
+
+export interface CostMachine {
+  id: number;
+  name: string;
+  color: string;
+  energy_kwh: number;
+  cost_eur: number;
+  cost_month_eur: number;
+  cost_share_pct: number;
+}
+
+export interface CostReport {
+  tariff: { name: string; currency: string; rates_eur_kwh: Record<string, number> };
+  hours_covered: number;
+  periods: CostPeriod[];
+  shifts: CostShift[];
+  machines: CostMachine[];
+  residual: { energy_kwh: number; cost_eur: number; cost_month_eur: number };
+  total: { energy_kwh: number; cost_eur: number; cost_month_eur: number };
+  method: string;
 }
 
 export type ActiveTab = 'overview' | 'machines' | 'timeline' | 'features3d' | 'features2d' | 'hourly' | 'quality' | 'pq' | 'harmonic' | 'fhmm' | 'validation' | 'benchmark' | 'standby';

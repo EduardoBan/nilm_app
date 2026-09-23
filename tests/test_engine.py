@@ -333,6 +333,109 @@ def test_standby_report_degenerate_input_returns_empty():
     assert NILMEngine._standby_report(df, p, np.zeros(49)) == {}
 
 
+def test_cost_report_keys_and_consistency():
+    """MEJORA #16: informe de coste completo y matematicamente consistente."""
+    eng = NILMEngine(_FakeDM(make_df_harm()))
+    res = eng.analyze_dataset("synthetic", n_clusters=2, use_fhmm=True,
+                              max_states=2, power_threshold=0.5,
+                              current_threshold=2.0)
+
+    cost = res.get("cost")
+    assert cost, "analyze_dataset debe devolver 'cost' con datos suficientes"
+    assert set(cost) >= {"tariff", "hours_covered", "periods", "shifts",
+                         "machines", "residual", "total", "method"}
+    assert cost["hours_covered"] > 0.0
+    assert set(cost["tariff"]) >= {"name", "currency", "rates_eur_kwh"}
+    rates = cost["tariff"]["rates_eur_kwh"]
+    assert set(rates) >= {"valle", "llano", "punta"}
+    assert all(v >= 0.0 for v in rates.values())
+
+    # La suma de los periodos reproduce los totales (redondeos aparte).
+    e_sum = sum(p["energy_kwh"] for p in cost["periods"])
+    tol_e = max(0.05, cost["total"]["energy_kwh"] * 0.02)
+    assert abs(e_sum - cost["total"]["energy_kwh"]) <= tol_e
+    c_sum = sum(p["cost_eur"] for p in cost["periods"])
+    tol_c = max(0.05, cost["total"]["cost_eur"] * 0.02)
+    assert abs(c_sum - cost["total"]["cost_eur"]) <= tol_c
+    # Idem para los turnos (otra particion de la misma energia).
+    s_sum = sum(s["cost_eur"] for s in cost["shifts"])
+    assert abs(s_sum - cost["total"]["cost_eur"]) <= tol_c
+
+    # Los equipos mas el residuo no superan el total (redondeos aparte).
+    mc = sum(m["cost_eur"] for m in cost["machines"])
+    assert mc + cost["residual"]["cost_eur"] <= \
+        cost["total"]["cost_eur"] * 1.05 + 0.05
+    for m in cost["machines"]:
+        assert set(m) >= {"id", "name", "color", "energy_kwh", "cost_eur",
+                          "cost_month_eur", "cost_share_pct"}
+        assert m["energy_kwh"] >= 0.0 and m["cost_eur"] >= 0.0
+        assert 0.0 <= m["cost_share_pct"] <= 100.0
+    assert cost["residual"]["cost_eur"] >= 0.0
+
+    # Los machine_statistics quedan enriquecidos con el coste.
+    for m in res["machine_statistics"]:
+        assert "cost_eur" in m and "cost_month_eur" in m
+        assert m["cost_eur"] >= 0.0 and m["cost_month_eur"] >= 0.0
+
+
+def test_cost_report_period_split_known_hours():
+    """MEJORA #16: el reparto por periodos cuadra con la tarifa 2.0TD.
+
+    Lunes de 24 h (1 muestra/hora): el dt de la primera muestra es cero
+    (misma convencion que el informe standby), asi que de las 23 h
+    cubiertas corresponden valle = 01-08 (7 h), punta = 10-14 y 18-22
+    (8 h), llano = 08, 09, 14-17 y 22 (8 h). Con 1 kW constante y tarifa
+    plana de 1 EUR/kWh, el coste total vale 23.00 EUR.
+    """
+    hours_n = 24
+    ts = pd.date_range("2024-01-01", periods=hours_n, freq="1h")  # lunes
+    df = pd.DataFrame({"timestamp": ts, "P_total": np.ones(hours_n)})
+    disagg = {1: np.ones(hours_n)}
+    baseline = np.zeros(hours_n)
+    info = {1: {"name": "M1", "color": "#ffffff"}}
+
+    cost = NILMEngine._cost_report(df, disagg, baseline, info)
+    assert cost, "con 24 h horarias debe emitirse informe de coste"
+    by = {p["period"]: p for p in cost["periods"]}
+    assert set(by) == {"valle", "llano", "punta"}
+    assert abs(by["valle"]["hours"] - 7.0) < 1e-6
+    assert abs(by["punta"]["hours"] - 8.0) < 1e-6
+    assert abs(by["llano"]["hours"] - 8.0) < 1e-6
+    assert abs(cost["hours_covered"] - 23.0) < 1e-6
+
+    # Fin de semana entero en valle: sabado de 24 h (23 h cubiertas).
+    ts_sat = pd.date_range("2024-01-06", periods=hours_n, freq="1h")
+    df_sat = pd.DataFrame({"timestamp": ts_sat, "P_total": np.ones(hours_n)})
+    cost_sat = NILMEngine._cost_report(df_sat, disagg, baseline, info)
+    by_sat = {p["period"]: p for p in cost_sat["periods"]}
+    assert abs(by_sat["valle"]["hours"] - 23.0) < 1e-6
+    assert by_sat["punta"]["hours"] == 0.0 and by_sat["llano"]["hours"] == 0.0
+
+    # Tarifa plana: 23 kWh a 1 EUR/kWh = 23.00 EUR, todo en un equipo.
+    flat = {"name": "plana", "currency": "EUR",
+            "rates_eur_kwh": {"valle": 1.0, "llano": 1.0, "punta": 1.0}}
+    cost_flat = NILMEngine._cost_report(df, disagg, baseline, info,
+                                        tariff=flat)
+    assert abs(cost_flat["total"]["energy_kwh"] - 23.0) < 1e-6
+    assert abs(cost_flat["total"]["cost_eur"] - 23.0) < 1e-6
+    assert len(cost_flat["machines"]) == 1
+    assert abs(cost_flat["machines"][0]["cost_eur"] - 23.0) < 1e-6
+
+
+def test_cost_report_degenerate_input_returns_empty():
+    """MEJORA #16: entradas degeneradas devuelven dict vacio sin excepcion."""
+    assert NILMEngine._cost_report(pd.DataFrame({"P_total": [1.0, 1.0]}),
+                                   {}, np.zeros(2), {}) == {}
+    tiny = pd.DataFrame({
+        "timestamp": pd.date_range("2024-01-01", periods=1, freq="1min"),
+        "P_total": [1.0],
+    })
+    assert NILMEngine._cost_report(tiny, {}, np.zeros(1), {}) == {}
+    df = make_df(n=50)
+    assert NILMEngine._cost_report(df, {1: np.ones(50)}, np.zeros(49),
+                                   {1: {}}) == {}
+
+
 def test_validation_report_keys_and_consistency():
     """PASO 3: informe de validación completo y matemáticamente consistente."""
     eng = NILMEngine(_FakeDM(make_df_harm()))

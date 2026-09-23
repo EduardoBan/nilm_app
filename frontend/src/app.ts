@@ -409,6 +409,7 @@ class NILMApp {
         <td>${m.event_count} arranques</td>
         <td>${m.active_minutes.toFixed(0)} min</td>
         <td><strong>${m.energy_kwh.toFixed(2)} kWh</strong></td>
+        <td><strong>${m.cost_eur != null ? m.cost_eur.toFixed(2) + ' €' : '--'}</strong>${m.cost_month_eur != null ? `<br><small title="Proyección mensual">${m.cost_month_eur.toFixed(2)} €/mes</small>` : ''}</td>
         <td>
           <div class="progress-bar-wrap">
             <div class="progress-bar-fill" style="width:${Math.min(100, m.energy_share_pct)}%; background:${m.color}"></div>
@@ -610,6 +611,7 @@ class NILMApp {
 
   private renderMachinesTab() {
     if (!this.analysis) return;
+    this.renderCostSummary();
     const container = document.getElementById('machines-cards-container');
     if (!container) return;
     container.innerHTML = '';
@@ -669,6 +671,10 @@ class NILMApp {
             <span class="mc-stat-label">Consumo Total</span>
             <span class="mc-stat-val">${m.energy_kwh.toFixed(2)} kWh (${m.energy_share_pct.toFixed(1)}%)</span>
           </div>
+          <div class="mc-stat">
+            <span class="mc-stat-label">Coste (tarifa)</span>
+            <span class="mc-stat-val">${m.cost_eur != null ? m.cost_eur.toFixed(2) + ' €' : '--'}${m.cost_month_eur != null ? ` (${m.cost_month_eur.toFixed(2)} €/mes)` : ''}</span>
+          </div>
         </div>
         ${this.renderMachineStatesBlock(m)}
       `;
@@ -684,6 +690,53 @@ class NILMApp {
         if (nameSpan) this.startRename(id, nameSpan);
       });
     });
+  }
+
+  /** MEJORA #16: resumen del coste energetico (tarifa, totales, periodos, turnos) */
+  private renderCostSummary() {
+    const el = document.getElementById('cost-summary');
+    if (!el) return;
+    const c = this.analysis?.cost;
+    if (!c || !c.total) {
+      el.style.display = 'none';
+      el.innerHTML = '';
+      return;
+    }
+    el.style.display = '';
+    const rates = (c.tariff && c.tariff.rates_eur_kwh) || {};
+    const rateLbl = ['valle', 'llano', 'punta']
+      .filter(k => rates[k] != null)
+      .map(k => `${k} ${Number(rates[k]).toFixed(4)}`)
+      .join(' · ');
+    const periodChips = (c.periods || []).map(p => `
+      <div class="mc-stat">
+        <span class="mc-stat-label">Periodo ${escapeHtml(p.period)}</span>
+        <span class="mc-stat-val">${p.cost_eur.toFixed(2)} € <small>(${p.hours.toFixed(1)} h)</small></span>
+      </div>`).join('');
+    const shiftChips = (c.shifts || []).map(s => `
+      <div class="mc-stat">
+        <span class="mc-stat-label">Turno ${escapeHtml(s.shift)}</span>
+        <span class="mc-stat-val">${s.cost_eur.toFixed(2)} € <small>(${s.hours.toFixed(1)} h)</small></span>
+      </div>`).join('');
+    el.innerHTML = `
+      <div class="mc-grid">
+        <div class="mc-stat">
+          <span class="mc-stat-label">💶 Coste total · ${escapeHtml(c.tariff?.name || 'tarifa')}</span>
+          <span class="mc-stat-val">${c.total.cost_eur.toFixed(2)} €</span>
+        </div>
+        <div class="mc-stat">
+          <span class="mc-stat-label">Proyección mensual</span>
+          <span class="mc-stat-val">${c.total.cost_month_eur.toFixed(2)} €/mes</span>
+        </div>
+        <div class="mc-stat">
+          <span class="mc-stat-label">Residuo / standby</span>
+          <span class="mc-stat-val">${c.residual ? c.residual.cost_eur.toFixed(2) + ' €' : '--'}</span>
+        </div>
+        ${periodChips}
+        ${shiftChips}
+      </div>
+      <p class="cost-tariff-note">Tarifa (${rateLbl} €/kWh) · Cobertura ${c.hours_covered.toFixed(1)} h</p>
+    `;
   }
 
   /** Opción A: desglose de estados multi-nivel FHMM en las fichas técnicas */
