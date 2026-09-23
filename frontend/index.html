@@ -480,6 +480,22 @@
             <canvas id="chart-standby-hist"></canvas>
           </div>
         </div>
+
+        <!-- Tab: Anomalías sobre el residuo (MEJORA #14) -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">⚠️ Anomalías sobre el residuo</h2>
+              <p class="card-subtitle">MAE móvil del residuo vs umbral robusto (mediana + 3·1.4826·MAD): picos sostenidos = degradación de equipo o carga no catalogada</p>
+            </div>
+          </div>
+          <div id="anomaly-kpis" class="validation-grid"><div class="empty-state"><p>Ejecuta el análisis NILM para detectar anomalías en el residuo.</p></div></div>
+          <div class="chart-container" style="margin-top:12px;">
+            <canvas id="chart-anomaly-mae"></canvas>
+          </div>
+          <div id="anomaly-events"></div>
+          <div id="anomaly-method" class="card-subtitle" style="margin-top:8px;"></div>
+        </div>
       </div>
     </section>
 
@@ -594,6 +610,6 @@
   <div id="toast" class="toast"></div>
 
   <!-- Compiled TypeScript Application Bundle -->
-  <script src="dist/bundle.js?v=mejora15-20260923"></script>
+  <script src="dist/bundle.js?v=mejora14-20260923"></script>
 </body>
 </html>

@@ -103,7 +103,10 @@ D. NUEVOS ANALISIS DE VALOR
 #14 Anomalias sobre el residuo
     MAE movil del residuo; picos sostenidos = degradacion de equipo o
     carga nueva no catalogada.
-    Impacto: MEDIO | Esfuerzo: BAJO | Estado: PENDIENTE
+    Impacto: MEDIO | Esfuerzo: BAJO | Estado: HECHA (2026-09-23) —
+    _residual_anomalies (MAE movil + MAD) + campo 'residual_anomalies'
+    + bloque en la pestana Fugas/Standby (KPIs, MAE vs umbral, lista
+    de eventos); bundle v=mejora14-20260923.
 
 #15 Calidad de energia por equipo
     Ya hay THD y H3/H5/H7 por maquina: aportar costo de distorsion
@@ -257,8 +260,8 @@ PowerQualityHandler (Tornado) + pestaña frontend.
   Verificado con scripts/_e2e_pq.py y scripts/_smoke_http.py (HTTP 200,
   66 KB, JSON estricto).
 =====================================================================
- FIN DEL REGISTRO DE MEJORAS (2026-09-23: #15 calidad por equipo y
- #16 coste economico por equipo;
+ FIN DEL REGISTRO DE MEJORAS (2026-09-23: #14 anomalias sobre el
+ residuo, #15 calidad por equipo y #16 coste economico por equipo;
  2026-09-22: #13 fugas/standby implementada;
  anterior 2026-09-21: #11 y #12 implementadas)
 =====================================================================

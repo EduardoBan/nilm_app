@@ -232,6 +232,34 @@ export interface StandbyReport {
   method: string;
 }
 
+/* MEJORA #14: anomalias sobre el residuo (MAE movil + umbral MAD) */
+export interface ResidualAnomalyEvent {
+  start_pct: number;
+  end_pct: number;
+  start_iso: string;
+  end_iso: string;
+  duration_min: number;
+  peak_mae_kw: number;
+}
+
+export interface ResidualAnomalyReport {
+  samples: number;
+  window_samples: number;
+  window_minutes: number;
+  min_run_samples: number;
+  center_kw: number;
+  threshold_kw: number;
+  mae_kw: { p50: number; p95: number; max: number };
+  n_events: number;
+  anomalous_pct: number;
+  max_mae_kw: number;
+  labels_pct: number[];
+  mae_series: number[];
+  threshold_series: number[];
+  events: ResidualAnomalyEvent[];
+  method: string;
+}
+
 export interface ConfusionGlobal extends ConfusionCounts {
   precision: number;
   recall: number;
@@ -287,6 +315,8 @@ export interface NILMAnalysisResult {
   validation?: ValidationReport | null;
   /* MEJORA #13: fugas / standby a partir del residuo (baseline) */
   standby?: StandbyReport | null;
+  /* MEJORA #14: anomalias sobre el residuo (MAE movil + umbral MAD) */
+  residual_anomalies?: ResidualAnomalyReport | null;
   /* MEJORA #16: coste economico por equipo (tarifa horaria) */
   cost?: CostReport | null;
   /* Opción A: modelado multi-estado FHMM */

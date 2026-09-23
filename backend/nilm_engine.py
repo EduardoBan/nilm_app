@@ -1363,6 +1363,126 @@ class NILMEngine:
             return {}
 
     # ------------------------------------------------------------------
+    # MEJORA #14: anomalias sobre el residuo (baseline tras desagregar).
+    # MAE movil del residuo vs umbral robusto (mediana + 3*1.4826*MAD):
+    # picos sostenidos = degradacion de equipo o carga nueva no
+    # catalogada. Mismo estilo JSON-safe que _standby_report.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _residual_anomalies(df_work, p_total, baseline_curve):
+        """Detecta picos sostenidos del residuo (MAE movil + MAD).
+
+        Devuelve dict JSON-safe con los percentiles del MAE movil, el
+        umbral robusto (mediana + 3*1.4826*MAD), las series decimadas
+        (<=400 pts) para la grafica y los eventos sostenidos (runs de
+        >= min_run_samples muestras) con sus marcas de tiempo. Dict
+        vacio si hay <30 muestras o longitudes incoherentes.
+        """
+        try:
+            n = int(len(baseline_curve))
+            if n < 30 or len(p_total) != n:
+                return {}
+            base = np.clip(np.nan_to_num(np.asarray(baseline_curve,
+                                                     dtype=float),
+                                         nan=0.0, posinf=0.0, neginf=0.0),
+                           0.0, None)
+
+            ts = pd.to_datetime(df_work['timestamp'], errors='coerce') \
+                if 'timestamp' in df_work.columns else None
+            dt_min = 10.0 / 60.0
+            if ts is not None and int(ts.notna().sum()) >= 2:
+                step = float(ts.dropna().diff().dt.total_seconds().median())
+                if np.isfinite(step) and step > 0:
+                    dt_min = step / 60.0
+
+            # Ventana movil de ~30 min, acotada a [5, n/4] muestras.
+            want = max(5, int(round(30.0 / max(dt_min, 1e-9))))
+            w = int(np.clip(want, 5, max(5, n // 4)))
+            mae = np.convolve(base, np.ones(w) / float(w), mode='valid')
+            if int(mae.size) < 10:
+                return {}
+
+            def _pct(arr, q):
+                try:
+                    return float(np.percentile(arr, q))
+                except Exception:
+                    return 0.0
+
+            center = float(np.median(mae))
+            mad = float(np.median(np.abs(mae - center)))
+            floor = max(3.0 * 1.4826 * mad, 0.05 * abs(center), 1e-6)
+            thr = center + floor
+            mask = mae > thr
+
+            # Runs contiguos de anomalia; al menos la mitad de la ventana.
+            min_run = max(3, w // 2)
+            padded = np.concatenate(([0], mask.astype(np.int8), [0]))
+            edges = np.diff(padded)
+            starts = np.where(edges == 1)[0]
+            ends = np.where(edges == -1)[0]
+            sustained = []
+            for s0, e0 in zip(starts, ends):
+                if int(e0 - s0) >= min_run:
+                    sustained.append((int(s0), int(e0)))
+
+            ts_ok = ts is not None and int(ts.notna().sum()) >= n
+            tsv = ts.to_numpy() if ts_ok else None
+            events = []
+            for s0, e0 in sustained[:50]:
+                i0 = min(n - 1, s0 + w // 2)
+                i1 = min(n - 1, e0 - 1 + w // 2)
+                if i1 < i0:
+                    i1 = i0
+                iso0 = iso1 = ''
+                if tsv is not None:
+                    try:
+                        iso0 = pd.Timestamp(tsv[i0]).isoformat()
+                        iso1 = pd.Timestamp(tsv[i1]).isoformat()
+                    except Exception:
+                        iso0 = iso1 = ''
+                events.append({
+                    'start_pct': round(i0 / max(1, n - 1) * 100.0, 2),
+                    'end_pct': round(i1 / max(1, n - 1) * 100.0, 2),
+                    'start_iso': iso0,
+                    'end_iso': iso1,
+                    'duration_min': round((i1 - i0 + 1) * dt_min, 1),
+                    'peak_mae_kw': round(float(np.max(mae[s0:e0])), 3),
+                })
+
+            # Series decimadas a <=400 puntos (etiqueta en % del eje X).
+            k = min(400, int(mae.size))
+            idx = np.unique(np.linspace(0, mae.size - 1, k).astype(int))
+            mid = np.clip(idx + w // 2, 0, n - 1)
+            labels_pct = [round(float(v) / max(1, n - 1) * 100.0, 2)
+                          for v in mid]
+            mae_series = [round(float(v), 3) for v in mae[idx]]
+            thr_series = [round(thr, 3)] * len(mae_series)
+
+            return {
+                'samples': n,
+                'window_samples': w,
+                'window_minutes': round(w * dt_min, 1),
+                'min_run_samples': min_run,
+                'center_kw': round(center, 3),
+                'threshold_kw': round(thr, 3),
+                'mae_kw': {'p50': round(_pct(mae, 50), 3),
+                           'p95': round(_pct(mae, 95), 3),
+                           'max': round(float(np.max(mae)), 3)},
+                'n_events': len(sustained),
+                'anomalous_pct': round(float(np.mean(mask)) * 100.0, 2),
+                'max_mae_kw': round(float(np.max(mae)), 3),
+                'labels_pct': labels_pct,
+                'mae_series': mae_series,
+                'threshold_series': thr_series,
+                'events': events,
+                'method': 'MAE movil (~30 min) del residuo; umbral = '
+                          'mediana + 3*1.4826*MAD; eventos >= min_run '
+                          'muestras (max 50); series decimadas <=400 pts.',
+            }
+        except Exception:
+            return {}
+
+    # ------------------------------------------------------------------
     # MEJORA #16: coste economico por equipo (tarifa horaria).
     # Cruza la energia desagregada con una tarifa por periodos
     # (valle/llano/punta del 2.0TD peninsular por defecto, editable via
@@ -1823,6 +1943,11 @@ class NILMEngine:
             if 'P_total' in df_work.columns else np.zeros(n)
         standby = self._standby_report(df_work, p_full, baseline_curve)
 
+        # MEJORA #14: anomalias sobre el residuo — reutiliza el mismo
+        # baseline que la #13 (MAE movil + umbral MAD robusto).
+        residual_anomalies = self._residual_anomalies(
+            df_work, p_full, baseline_curve)
+
         # MEJORA #16: coste economico por equipo con tarifa horaria
         # (periodos 2.0TD + turnos). Se enriquece cada machine_stat con
         # su coste para que la tabla/ficha no tenga que recalcularlo.
@@ -1858,6 +1983,7 @@ class NILMEngine:
             "fhmm_exact": fhmm_exact,
             "validation": validation,
             "standby": standby,
+            "residual_anomalies": residual_anomalies,
             "cost": cost_report,
             "fhmm_enabled": use_fhmm,
             "multi_state_models": {

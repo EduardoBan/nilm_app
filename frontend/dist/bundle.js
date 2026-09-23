@@ -2922,6 +2922,8 @@ class NILMApp {
   /** MEJORA #13: fugas / standby — KPIs del residuo + curva de duración. */
           renderStandbyTab()       {
     const sb = this.analysis?.standby ?? null;
+    // MEJORA #14: el bloque de anomalias vive en la misma pestana.
+    this.renderAnomalyBlock();
     const kpiBox = document.getElementById('standby-kpis');
     const methodBox = document.getElementById('standby-method');
     const empty = '<div class="empty-state"><p>Ejecuta el análisis NILM para cuantificar el consumo fantasma (residuo no atribuido).</p></div>';
@@ -2970,6 +2972,64 @@ class NILMApp {
       const labels = sb.hist.edges.slice(0, -1).map(e => e.toFixed(1));
       const res = ChartEngine.renderBarChart(cHist, labels, sb.hist.counts, '#8B5CF6', '', 'Distribución del standby (kW)');
       this.chartCleanups.push(res.destroy);
+    }
+  }
+
+  /** MEJORA #14: anomalías sobre el residuo — MAE móvil vs umbral MAD. */
+          renderAnomalyBlock()       {
+    const ra = this.analysis?.residual_anomalies ?? null;
+    const kpiBox = document.getElementById('anomaly-kpis');
+    const eventsBox = document.getElementById('anomaly-events');
+    const methodBox = document.getElementById('anomaly-method');
+    const canvas = document.getElementById('chart-anomaly-mae')                            ;
+    const empty = '<div class="empty-state"><p>Ejecuta el análisis NILM para detectar anomalías en el residuo.</p></div>';
+    if (!ra || !ra.mae_series || ra.mae_series.length < 2) {
+      if (kpiBox) kpiBox.innerHTML = empty;
+      if (eventsBox) eventsBox.innerHTML = '';
+      if (methodBox) methodBox.innerHTML = '';
+      if (canvas) { const g = canvas.getContext('2d'); if (g) g.clearRect(0, 0, canvas.width, canvas.height); }
+      return;
+    }
+    const cards = [
+      { label: 'Umbral (mediana + 3·MAD)', value: `${ra.threshold_kw.toFixed(3)} kW`, note: `centro ${ra.center_kw.toFixed(3)} kW · ventana ${ra.window_minutes.toFixed(0)} min (${ra.window_samples} muestras)` },
+      { label: 'MAE máximo del residuo', value: `${ra.max_mae_kw.toFixed(3)} kW`, note: `P50 ${ra.mae_kw.p50.toFixed(3)} · P95 ${ra.mae_kw.p95.toFixed(3)} kW` },
+      { label: 'Eventos sostenidos', value: `${ra.n_events}`, note: `≥ ${ra.min_run_samples} muestras contiguas` },
+      { label: 'Muestras anómalas', value: `${ra.anomalous_pct.toFixed(1)} %`, note: `${ra.samples} muestras analizadas` },
+    ];
+    if (kpiBox) {
+      kpiBox.innerHTML = cards.map(c => `
+        <div class="val-card">
+          <h4>${escapeHtml(c.label)}</h4>
+          <div class="val-main">${escapeHtml(c.value)}</div>
+          <small>${escapeHtml(c.note)}</small>
+        </div>`).join('');
+    }
+    if (methodBox) methodBox.innerHTML = `<small>${escapeHtml(ra.method)}</small>`;
+
+    if (canvas) {
+      const labels = ra.labels_pct.map(p => `${p.toFixed(0)}%`);
+      const res = ChartEngine.renderTimeSeries(canvas, labels, [
+        { name: 'MAE del residuo', data: ra.mae_series, color: '#EF4444', fill: true },
+        { name: 'Umbral (mediana + 3·MAD)', data: ra.threshold_series, color: '#F59E0B', dash: [6, 4] },
+      ], 'kW', 'MAE móvil del residuo vs umbral robusto');
+      this.chartCleanups.push(res.destroy);
+    }
+
+    if (eventsBox) {
+      if (!ra.events || ra.events.length === 0) {
+        eventsBox.innerHTML = '<p class="card-subtitle">Sin picos sostenidos por encima del umbral.</p>';
+      } else {
+        const shown = ra.events.slice(0, 12);
+        eventsBox.innerHTML = `<div class="validation-grid">` + shown.map((e, i) => `
+          <div class="val-card">
+            <h4>Evento ${i + 1} · ${e.duration_min.toFixed(0)} min</h4>
+            <div class="val-main">${e.peak_mae_kw.toFixed(3)} kW</div>
+            <small>${escapeHtml(e.start_iso || `${e.start_pct.toFixed(0)}%`)} → ${escapeHtml(e.end_iso || `${e.end_pct.toFixed(0)}%`)}</small>
+          </div>`).join('') + `</div>` +
+          (ra.events.length > shown.length
+            ? `<p class="card-subtitle">+${ra.events.length - shown.length} eventos adicionales en el JSON del análisis.</p>`
+            : '');
+      }
     }
   }
 

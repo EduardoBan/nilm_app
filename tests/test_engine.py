@@ -574,3 +574,52 @@ def test_validation_empty_series_returns_empty_dict():
         "P_total": [1.0, 1.0],
     })
     assert eng._validate_disaggregation(tiny, pd.DataFrame(), {}, {}, np.zeros(2)) == {}
+
+
+def test_residual_anomalies_detects_injected_spike():
+    """MEJORA #14: un pico sostenido del residuo cruza el umbral MAD."""
+    import json
+    n = 600
+    rng = np.random.default_rng(3)
+    base = np.clip(np.full(n, 2.0) + rng.normal(0.0, 0.02, n), 0.0, None)
+    base[400:460] += 3.0
+    ts = pd.date_range("2024-01-01", periods=n, freq="10s")
+    p_total = base + 5.0
+    df = pd.DataFrame({"timestamp": ts, "P_total": p_total})
+    rep = NILMEngine._residual_anomalies(df, p_total, base)
+    assert rep
+    assert set(rep) >= {
+        "samples", "window_samples", "window_minutes", "min_run_samples",
+        "center_kw", "threshold_kw", "mae_kw", "n_events",
+        "anomalous_pct", "max_mae_kw", "labels_pct", "mae_series",
+        "threshold_series", "events", "method",
+    }
+    assert rep["n_events"] >= 1
+    ev = rep["events"][0]
+    assert ev["peak_mae_kw"] > rep["threshold_kw"] > 0.0
+    assert 0.0 <= ev["start_pct"] < ev["end_pct"] <= 100.0
+    assert ev["duration_min"] >= 5.0
+    assert 0.0 <= rep["anomalous_pct"] <= 100.0
+    assert len(rep["labels_pct"]) == len(rep["mae_series"]) \
+        == len(rep["threshold_series"]) <= 400
+    assert rep["max_mae_kw"] >= rep["mae_kw"]["p95"] >= rep["mae_kw"]["p50"]
+    json.dumps(rep, allow_nan=False)
+
+
+def test_residual_anomalies_flat_and_degenerate():
+    """MEJORA #14: serie plana -> sin eventos; entrada corta -> dict vacio."""
+    tiny = pd.DataFrame({
+        "timestamp": pd.date_range("2024-01-01", periods=5, freq="1min"),
+        "P_total": [1.0] * 5,
+    })
+    assert NILMEngine._residual_anomalies(tiny, np.ones(5), np.ones(5)) == {}
+    n = 120
+    flat = np.full(n, 2.0)
+    df = pd.DataFrame({
+        "timestamp": pd.date_range("2024-01-01", periods=n, freq="10s"),
+        "P_total": np.full(n, 5.0),
+    })
+    rep = NILMEngine._residual_anomalies(df, np.full(n, 5.0), flat)
+    assert rep["n_events"] == 0 and rep["events"] == []
+    assert rep["anomalous_pct"] == 0.0
+    assert NILMEngine._residual_anomalies(df, np.ones(n - 1), flat) == {}
