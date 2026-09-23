@@ -1760,6 +1760,53 @@ class NILMEngine:
             "tolerance_s": round(float(tol_s), 2),
         }
 
+    @staticmethod
+    def _bootstrap_ci(cells, metrics, n_boot=1000, seed=42, ci_pct=95):
+        """MEJORA #12: intervalos de confianza (bootstrap) de F1/P/R.
+
+        Remuestrea los pares (referencia, prediccion) como una multinomial
+        sobre las cuatro celdas de la matriz de confusion — equivalente al
+        remuestreo no parametrico de las observaciones — y recalcula las
+        metricas en cada iteracion. Semilla fija: resultado reproducible.
+        Devuelve {metrica: {lo, hi, mean, half}} con los percentiles del IC.
+        """
+        try:
+            tp = max(0, int(cells.get("tp", 0)))
+            fp = max(0, int(cells.get("fp", 0)))
+            fn = max(0, int(cells.get("fn", 0)))
+            tn = max(0, int(cells.get("tn", 0)))
+            total = tp + fp + fn + tn
+            if total <= 0 or n_boot < 20:
+                return {}
+            probs = np.array([tp, fp, fn, tn], dtype=float) / float(total)
+            rng = np.random.default_rng(int(seed))
+            d = rng.multinomial(total, probs, size=int(n_boot))
+            p_tp = d[:, 0].astype(float)
+            p_fp = d[:, 1].astype(float)
+            p_fn = d[:, 2].astype(float)
+            prec = np.divide(p_tp, p_tp + p_fp, out=np.zeros_like(p_tp),
+                             where=(p_tp + p_fp) > 0)
+            rec = np.divide(p_tp, p_tp + p_fn, out=np.zeros_like(p_tp),
+                            where=(p_tp + p_fn) > 0)
+            f1 = np.divide(2.0 * prec * rec, prec + rec,
+                           out=np.zeros_like(prec), where=(prec + rec) > 0)
+            series = {"precision": prec, "recall": rec, "f1": f1}
+            alpha = (100.0 - float(ci_pct)) / 2.0
+            out = {}
+            for name in metrics:
+                v = series.get(name)
+                if v is None:
+                    continue
+                lo, hi = np.percentile(v, [alpha, 100.0 - alpha])
+                out[name] = {
+                    "lo": round(float(lo), 3), "hi": round(float(hi), 3),
+                    "mean": round(float(np.mean(v)), 3),
+                    "half": round(float((hi - lo) / 2.0), 3),
+                }
+            return out
+        except Exception:
+            return {}
+
     def _validate_machine(self, df_work, events, cluster_info, disagg_power,
                           c, timestamps) -> Dict[str, Any]:
         """PASO 3: validacion de un equipo (consistencia de saltos ON y
@@ -1880,12 +1927,25 @@ class NILMEngine:
                      "dt_max_s": round(max((m["transitions"]["dt_max_s"]
                                             for m in machines if m.get("transitions")),
                                            default=0.0), 2)}
+        # MEJORA #12: intervalos de confianza (bootstrap) de las metricas
+        # (remuestreo multinomial de las celdas, semilla fija -> reproducible).
+        conf_ci = self._bootstrap_ci(cm, ("precision", "recall", "f1"))
+        tr_ci = self._bootstrap_ci(tr, ("precision", "recall", "f1"))
+        confidence = {
+            "n_boot": 1000, "ci_pct": 95, "seed": 42,
+            "method": "Bootstrap multinomial sobre las celdas de la matriz "
+                      "(remuestreo de observaciones); IC por percentiles "
+                      "2.5/97.5 con semilla fija (reproducible).",
+            "confusion_global": conf_ci,
+            "transitions_global": tr_ci,
+        } if conf_ci else {}
         return {
             "reconstruction": self._validate_reconstruction_error(df_work, disagg_power, baseline_curve),
             "confusion_global": {**cm, "precision": round(precision, 3),
                                  "recall": round(recall, 3), "f1": round(f1, 3),
                                  "accuracy": round(accuracy, 3)},
             "transitions_global": tr_global,
+            "confidence": confidence,
             "machines": machines,
         }
 

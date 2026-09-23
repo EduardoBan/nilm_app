@@ -1,4 +1,5 @@
 """Motor NILM con datos sintéticos: eventos + clustering + validación de rangos."""
+import json
 import os
 import sys
 
@@ -689,4 +690,50 @@ def test_validation_report_includes_transitions():
         fn += t["fn"]
     # El agregado global es la suma de los equipos.
     assert (tp, fp, fn) == (tg["tp"], tg["fp"], tg["fn"])
+    json.dumps(val, allow_nan=False)
+
+
+def test_bootstrap_ci_deterministic_and_brackets_estimate():
+    """MEJORA #12: el bootstrap es reproducible y acota el estimador."""
+    cells = {"tp": 90, "fp": 5, "fn": 10, "tn": 995}
+    a = NILMEngine._bootstrap_ci(cells, ("precision", "recall", "f1"))
+    b = NILMEngine._bootstrap_ci(cells, ("precision", "recall", "f1"))
+    assert a and a == b, "semilla fija => mismo resultado"
+    # Estimador puntual dentro del intervalo y orden lo <= hi.
+    p = 90 / 95
+    r = 90 / 100
+    f1 = 2 * p * r / (p + r)
+    for key, point in (("precision", p), ("recall", r), ("f1", f1)):
+        ci = a[key]
+        assert 0.0 <= ci["lo"] <= ci["hi"] <= 1.0
+        assert ci["lo"] - 1e-6 <= point <= ci["hi"] + 1e-6
+        assert abs((ci["hi"] - ci["lo"]) / 2.0 - ci["half"]) <= 0.002
+        assert ci["lo"] <= ci["mean"] <= ci["hi"]
+    # Entradas degeneradas => dict vacio sin excepcion.
+    assert NILMEngine._bootstrap_ci({}, ("f1",)) == {}
+    assert NILMEngine._bootstrap_ci({"tp": 0, "fp": 0, "fn": 0, "tn": 0},
+                                    ("f1",)) == {}
+
+
+def test_validation_report_exposes_confidence():
+    """MEJORA #12: el informe de validacion incluye 'confidence' util."""
+    eng = NILMEngine(_FakeDM(make_df_harm()))
+    res = eng.analyze_dataset("synthetic", n_clusters=2, use_fhmm=True,
+                              max_states=2, power_threshold=0.5,
+                              current_threshold=2.0)
+    val = res.get("validation") or {}
+    bc = val.get("confidence")
+    assert bc, "validation debe exponer 'confidence' con datos suficientes"
+    assert bc["n_boot"] == 1000 and bc["ci_pct"] == 95 and bc["seed"] == 42
+    assert bc["method"]
+    for field in ("confusion_global", "transitions_global"):
+        ci = bc[field]
+        for key in ("precision", "recall", "f1"):
+            m = ci[key]
+            assert 0.0 <= m["lo"] <= m["hi"] <= 1.0
+            assert m["lo"] <= m["mean"] <= m["hi"]
+    # El F1 global puntual debe caer dentro de su propio intervalo.
+    point = val["confusion_global"]["f1"]
+    m = bc["confusion_global"]["f1"]
+    assert m["lo"] - 0.01 <= point <= m["hi"] + 0.01
     json.dumps(val, allow_nan=False)

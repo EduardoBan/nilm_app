@@ -1211,6 +1211,7 @@ class NILMApp {
         const r = v.reconstruction;
         const cg = v.confusion_global;
         const tg = v.transitions_global;
+        const bc = v.confidence;
         summary.innerHTML = `
           <div class="val-card"><span>MAE reconstrucción</span><strong>${r.mae_kw.toFixed(3)} kW</strong></div>
           <div class="val-card"><span>RMSE</span><strong>${r.rmse_kw.toFixed(3)} kW</strong></div>
@@ -1224,7 +1225,10 @@ class NILMApp {
           <div class="val-card"><span>Matriz global</span><strong>TP ${cg.tp} · FP ${cg.fp} · FN ${cg.fn} · TN ${cg.tn}</strong></div>${tg ? `
           <div class="val-card"><span>F1 arranques (Gantt)</span><strong>${tg.f1.toFixed(3)}</strong></div>
           <div class="val-card"><span>Arranques TP / FP / FN</span><strong>${tg.tp} · ${tg.fp} · ${tg.fn}</strong></div>
-          <div class="val-card"><span>Desfase arranques (med / máx)</span><strong>${tg.dt_median_s.toFixed(1)} / ${tg.dt_max_s.toFixed(1)} s</strong></div>` : ''}`;
+          <div class="val-card"><span>Desfase arranques (med / máx)</span><strong>${tg.dt_median_s.toFixed(1)} / ${tg.dt_max_s.toFixed(1)} s</strong></div>` : ''}${bc && bc.confusion_global ? `
+          <div class="val-card"><span>F1 global ON/OFF (IC ${bc.ci_pct} %, n=${bc.n_boot})</span><strong>${bc.confusion_global.f1.mean.toFixed(3)} ± ${bc.confusion_global.f1.half.toFixed(3)}</strong></div>
+          <div class="val-card"><span>Rango F1 ON/OFF</span><strong>[${bc.confusion_global.f1.lo.toFixed(3)}, ${bc.confusion_global.f1.hi.toFixed(3)}]</strong></div>
+          <div class="val-card"><span>F1 arranques (IC ${bc.ci_pct} %)</span><strong>${bc.transitions_global.f1.mean.toFixed(3)} ± ${bc.transitions_global.f1.half.toFixed(3)}</strong></div>` : ''}`;
       }
     }
 

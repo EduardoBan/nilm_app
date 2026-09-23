@@ -282,6 +282,23 @@ export interface TransitionMetrics {
   tolerance_s?: number;
 }
 
+/* MEJORA #12: intervalos de confianza (bootstrap) de las métricas */
+export interface BootstrapMetric {
+  lo: number;
+  hi: number;
+  mean: number;
+  half: number;
+}
+
+export interface BootstrapCI {
+  n_boot: number;
+  ci_pct: number;
+  seed: number;
+  method: string;
+  confusion_global: Record<'precision' | 'recall' | 'f1', BootstrapMetric>;
+  transitions_global: Record<'precision' | 'recall' | 'f1', BootstrapMetric>;
+}
+
 export interface MachineValidation {
   id: number;
   name: string;
@@ -308,6 +325,8 @@ export interface ValidationReport {
   machines: MachineValidation[];
   /* MEJORA #11: agregado global de transiciones */
   transitions_global?: TransitionMetrics;
+  /* MEJORA #12: intervalos de confianza (bootstrap) */
+  confidence?: BootstrapCI;
 }
 
 export interface NILMAnalysisResult {
