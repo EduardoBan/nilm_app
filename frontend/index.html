@@ -87,6 +87,16 @@
       </div>
 
       <div class="control-group">
+        <label for="select-pairing" title="MEJORA #8: emparejamiento ON→OFF de los eventos. Húngaro = asignación óptima (magnitud + cercanía temporal); Secuencial = primer OFF compatible (clásico); Auto = el de menor coste total">🔗 Pareo ON/OFF:</label>
+        <select id="select-pairing" class="select-input">
+          <option value="auto" selected>Auto (óptimo)</option>
+          <option value="hungarian">Húngaro (asignación óptima)</option>
+          <option value="sequential">Secuencial (clásico)</option>
+        </select>
+        <span id="pairing-note" class="k-opt-note" hidden></span>
+      </div>
+
+      <div class="control-group">
         <label for="slider-threshold">⚡ Umbral ΔI:</label>
         <div class="slider-wrap">
           <input type="range" id="slider-threshold" min="0.5" max="10.0" value="2.0" step="0.5">
@@ -617,6 +627,6 @@
   <div id="toast" class="toast"></div>
 
   <!-- Compiled TypeScript Application Bundle -->
-  <script src="dist/bundle.js?v=mejora17mod-20260923"></script>
+  <script src="dist/bundle.js?v=mejora8par-20260923"></script>
 </body>
 </html>

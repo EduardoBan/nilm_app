@@ -329,6 +329,10 @@ class NILMApp {
     // MEJORA #17: reutilizar el modelo de clustering persistido del sitio.
     const reuseCheck = document.getElementById('chk-reuse-model') as HTMLInputElement | null;
     const reuse_model = !!(reuseCheck && reuseCheck.checked);
+    // MEJORA #8: método de pareo ON/OFF del Gantt.
+    const pairingSelect = document.getElementById('select-pairing') as HTMLSelectElement | null;
+    const pairing_method = ((pairingSelect && pairingSelect.value) || 'auto') as
+      'auto' | 'hungarian' | 'sequential';
 
     this.showLoading(true);
     try {
@@ -341,7 +345,8 @@ class NILMApp {
         use_fhmm: this.useFhmm,
         max_states: 3,
         auto_k,
-        reuse_model
+        reuse_model,
+        pairing_method
       });
 
       this.updateApplianceTable();
@@ -363,6 +368,18 @@ class NILMApp {
         this.showToast(mr.reused
           ? `Modelo reutilizado (K=${mr.k}, guardado ${mr.saved_at}) — etiquetado consistente entre mediciones`
           : 'Sin modelo guardado compatible: se aplicó clustering normal y se guardó el nuevo', 'info');
+      }
+      // MEJORA #8: nota del pareo ON/OFF aplicado (húngaro vs secuencial).
+      const pairNote = document.getElementById('pairing-note');
+      const pair = this.analysis.pairing;
+      if (pairNote) {
+        if (pair && pair.pairs) {
+          const imp = pair.improved_pct ? ` · ${pair.improved_pct}% mejor coste` : '';
+          pairNote.textContent = `Pareo ${pair.method}: ${pair.pairs} ON↔OFF${imp}`;
+          pairNote.hidden = false;
+        } else {
+          pairNote.hidden = true;
+        }
       }
       const mode = this.analysis.fhmm_enabled ? 'FHMM multi-estado' : 'ON/OFF binario';
       const warn = (this.analysis as any).warning;

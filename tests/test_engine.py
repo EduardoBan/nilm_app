@@ -8,7 +8,8 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from backend.nilm_engine import NILMEngine, hmmlearn_available
+from backend.nilm_engine import (NILMEngine, hmmlearn_available,
+                                 _linear_sum_assignment)
 
 
 class _FakeDM:
@@ -859,3 +860,105 @@ def test_reuse_model_report_and_corrupt_fallback():
                                     power_threshold=0.5, current_threshold=2.0)
         assert plain["model_reuse"] == {"requested": False, "reused": False,
                                         "k": 0, "saved_at": ""}
+
+
+def _pairing_fixture(n=60):
+    """MEJORA #8: serie de 1 min con una maquina de 10 kW.
+
+    Dos arranques (t=10 y t=30) y tres OFF candidatos: t=15 con 20 kW
+    (magnitud doble), t=20 con 10 kW (magnitud exacta) y t=40 con 20 kW.
+    El OFF exacto de t=20 solo es alcanzable por el primer arranque, de modo
+    que el pareo secuencial se lo deja al segundo y cierra el primero con el
+    OFF de 20 kW; la asignacion optima los intercambia.
+    """
+    t = pd.date_range("2024-01-01 00:00", periods=n, freq="1min")
+    p = np.zeros(n)
+    p[10:40] = 10.0
+    df_work = pd.DataFrame({"timestamp": t, "P_total": p})
+    df_work["delta_P"] = df_work["P_total"].diff().fillna(0.0)
+    events = pd.DataFrame([
+        {"timestamp": t[10], "event_type": "ON", "delta_P": 10.0, "cluster": 0},
+        {"timestamp": t[15], "event_type": "OFF", "delta_P": -20.0, "cluster": 0},
+        {"timestamp": t[20], "event_type": "OFF", "delta_P": -10.0, "cluster": 0},
+        {"timestamp": t[30], "event_type": "ON", "delta_P": 10.0, "cluster": 0},
+        {"timestamp": t[40], "event_type": "OFF", "delta_P": -20.0, "cluster": 0},
+    ])
+    info = {0: {"name": "Prueba", "category": "Test", "color": "#000000",
+                "avg_delta_p": 10.0, "avg_delta_i": 5.0, "avg_thd": 1.0,
+                "count": len(events)}}
+    return df_work, events, info
+
+
+def test_hungarian_assign_solves_optimal_matrix():
+    """MEJORA #8: la asignacion optima descarta las combinaciones prohibidas."""
+    cost = np.array([[0.9, 0.1, 1e6],
+                     [1e6, 1e6, 0.2]])
+    feasible = cost < 1e6
+    asg = NILMEngine._hungarian_assign(cost, feasible)
+    if asg is None:
+        return  # scipy no disponible: el motor degrada a secuencial
+    assert asg == {0: 1, 1: 2}
+    assert all(bool(feasible[r, c]) for r, c in asg.items())
+    # Matriz vacia -> sin pares (no rompe).
+    assert NILMEngine._hungarian_assign(np.zeros((0, 0), dtype=float),
+                                        np.zeros((0, 0), dtype=bool)) == {}
+
+
+def test_hungarian_pairing_improves_off_assignment():
+    """MEJORA #8: 'auto' elige el pareo de menor coste (nunca peor que secuencial)."""
+    eng = NILMEngine(_FakeDM())
+    df_work, events, info = _pairing_fixture()
+
+    # Secuencial (historico): primer OFF compatible -> cierra el 1er arranque
+    # con el OFF de 20 kW y deja la maquina apagada entre t=15 y t=30.
+    dis_seq, _, tl_seq, _ = eng.disaggregate_load(
+        df_work.copy(), events.copy(), info, pairing_method="sequential")
+    rep_seq = dict(eng._pairing_report)
+    assert rep_seq["method"] == "sequential"
+    assert rep_seq["pairs"] == 2
+    assert rep_seq["machines_hungarian"] == 0
+    assert 10.0 not in dis_seq[0][15:30], "secuencial cierra en el 1er OFF"
+
+    # Auto: la asignacion optima empareja cada ON con su OFF de magnitud
+    # correcta -> sin hueco artificial (encendida de t=10 a t=40).
+    dis_auto, _, tl_auto, _ = eng.disaggregate_load(
+        df_work.copy(), events.copy(), info, pairing_method="auto")
+    rep_auto = dict(eng._pairing_report)
+    assert rep_auto["pairs"] == rep_seq["pairs"], "no debe perder pares"
+    assert rep_auto["cost"] <= rep_seq["cost"] + 1e-12
+    if _linear_sum_assignment is not None:
+        assert rep_auto["method"] == "hungarian"
+        assert rep_auto["machines_hungarian"] == 1
+        assert rep_auto["cost_hungarian"] < rep_auto["cost_sequential"]
+        assert rep_auto["improved_pct"] > 0.0
+        assert np.allclose(dis_auto[0][17], 10.0), "el 1er arranque sigue ON a t=17"
+        assert np.allclose(dis_auto[0][10:20], 10.0)
+    assert len(tl_auto) == 2 and len(tl_seq) == 2
+    json.dumps(rep_auto, allow_nan=False)
+
+
+def test_pairing_report_degenerate_and_exposed():
+    """MEJORA #8: sin OFF candidatos no hay pareo y analyze_dataset lo expone."""
+    eng = NILMEngine(_FakeDM())
+    df_work, events, info = _pairing_fixture()
+    on_only = events[events["event_type"] == "ON"].copy()
+    dis, _, tl, _ = eng.disaggregate_load(df_work.copy(), on_only, info,
+                                          pairing_method="auto")
+    rep = dict(eng._pairing_report)
+    assert rep["pairs"] == 0
+    assert rep["method"] == "sequential"
+    assert rep["requested"] == "auto"
+    assert rep["scipy_available"] is (_linear_sum_assignment is not None)
+    json.dumps(rep, allow_nan=False)
+
+    # analyze_dataset (mismo camino de eventos) publica el informe 'pairing'.
+    eng2 = NILMEngine(_FakeDM(make_df_harm()))
+    res = eng2.analyze_dataset("synthetic", n_clusters=2, use_fhmm=False,
+                               power_threshold=0.5, current_threshold=2.0)
+    pairing = res.get("pairing")
+    assert pairing, "el analisis debe publicar el informe de pareo"
+    assert pairing["pairs"] > 0
+    assert pairing["method"] in ("hungarian", "mixed", "sequential")
+    assert 0.0 <= pairing["improved_pct"] <= 100.0
+    assert pairing["machines_total"] == res["n_clusters"]
+    json.dumps(pairing, allow_nan=False)

@@ -365,6 +365,8 @@ export interface NILMAnalysisResult {
   k_selection?: KSelection | null;
   /* MEJORA #17: persistencia y reutilizacion del modelo de clustering */
   model_reuse?: ModelReuse | null;
+  /* MEJORA #8: informe del pareo ON/OFF del Gantt */
+  pairing?: PairingReport | null;
 }
 
 /* MEJORA #6: seleccion automatica de K */
@@ -390,6 +392,20 @@ export interface ModelReuse {
   saved_at: string;
 }
 
+/* MEJORA #8: pareo ON/OFF (asignación óptima húngara vs secuencial) */
+export interface PairingReport {
+  requested: string;
+  method: 'hungarian' | 'mixed' | 'sequential' | string;
+  pairs: number;
+  cost: number;
+  cost_sequential: number;
+  cost_hungarian: number;
+  machines_hungarian: number;
+  machines_total?: number;
+  improved_pct: number;
+  scipy_available: boolean;
+}
+
 export interface AnalysisParams {
   dataset_id: string;
   n_clusters: number;
@@ -403,6 +419,8 @@ export interface AnalysisParams {
   auto_k?: boolean;
   /* MEJORA #17: reutilizar el modelo de clustering persistido del sitio */
   reuse_model?: boolean;
+  /* MEJORA #8: método de pareo ON/OFF del Gantt */
+  pairing_method?: 'auto' | 'hungarian' | 'sequential';
 }
 
 /* MEJORA #9/#10: benchmark de algoritmos + estabilidad de umbrales (frontend-only) */

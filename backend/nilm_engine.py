@@ -27,6 +27,14 @@ except Exception:
     _GaussianHMM = None
     hmmlearn_available = False
 
+# --- MEJORA #8: pareo ON/OFF por asignacion optima (algoritmo hungaro) ---
+# scipy ya es dependencia declarada (requirements.txt); si faltara, el motor
+# degrada al pareo secuencial clasico sin romper el analisis.
+try:
+    from scipy.optimize import linear_sum_assignment as _linear_sum_assignment
+except Exception:
+    _linear_sum_assignment = None
+
 class NILMEngine:
     """
     Advanced NILM (Non-Intrusive Load Monitoring) Engine
@@ -774,13 +782,51 @@ class NILMEngine:
 
         return events, cluster_info
 
+    @staticmethod
+    def _hungarian_assign(cost, feasible):
+        """MEJORA #8: asignacion optima ON->OFF (algoritmo hungaro).
+
+        Resuelve el problema de asignacion minimizando el coste total de la
+        matriz `cost` (filas = arranques ON de una maquina, columnas = eventos
+        OFF candidatos). Solo devuelve los pares factibles (`feasible`), de
+        modo que las combinaciones prohibidas (OFF anterior al ON, fuera de
+        ventana o de magnitud incompatible) nunca entran en el resultado.
+        Devuelve {fila: columna} o None si scipy no esta disponible.
+        """
+        if _linear_sum_assignment is None or cost is None:
+            return None
+        if cost.size == 0:
+            return {}
+        try:
+            rows, cols = _linear_sum_assignment(cost)
+        except Exception:
+            return None
+        return {int(r): int(c) for r, c in zip(rows, cols) if feasible[r, c]}
+
     def disaggregate_load(self, df_work: pd.DataFrame, 
                           events: pd.DataFrame, 
-                          cluster_info: Dict[int, Any]):
+                          cluster_info: Dict[int, Any],
+                          pairing_method: str = 'auto'):
         """
         Continuous load disaggregation: Reconstructs the power time-series
         for each detected machine using strict ON-OFF event pairing and operational state timeline (Gantt).
+
+        MEJORA #8: `pairing_method` elige el emparejamiento ON<->OFF por
+        maquina: 'sequential' (primer OFF compatible, comportamiento
+        historico), 'hungarian' (asignacion optima magnitud + cercania
+        temporal) o 'auto' (el de menor coste total con al menos tantos pares;
+        nunca peor que el historico). El informe queda en _pairing_report.
         """
+        self._pairing_report = {
+            'requested': str(pairing_method or 'auto'),
+            'method': 'sequential',
+            'pairs': 0,
+            'cost': 0.0,
+            'cost_sequential': 0.0,
+            'cost_hungarian': 0.0,
+            'machines_hungarian': 0,
+            'scipy_available': _linear_sum_assignment is not None,
+        }
         n_points = len(df_work)
         timestamps = pd.to_datetime(df_work['timestamp']).to_numpy(dtype='datetime64[ns]')
         p_total = df_work['P_total'].values
@@ -845,6 +891,86 @@ class NILMEngine:
                                 })
                             used_off_indices.add(_oi)
 
+            # MEJORA #8: pareo ON<->OFF por ASIGNACION. Se construye la matriz
+            # de candidatos factibles (OFF posterior al ON y no mas alla del
+            # siguiente ON de la maquina, magnitud en [0.5, 2.5]x nominal) con
+            # coste = 0.7*|mag-nominal|/nominal + 0.3*desfase_relativo y se
+            # resuelve por asignacion optima (hungaro). 'auto' se queda con el
+            # de menor coste total (con al menos tantos pares como el clasico),
+            # de modo que el resultado nunca empeora al comportamiento previo.
+            on_meta = []
+            for pos, (on_i, ev_on) in enumerate(c_events_on.iterrows()):
+                ev_on_time = np.datetime64(pd.Timestamp(ev_on['timestamp']).to_datetime64(), 'ns')
+                idx_on = int(np.searchsorted(timestamps, ev_on_time))
+                if idx_on >= n_points or disagg_power[c][idx_on] > 0:
+                    on_meta.append((pos, None, None))
+                    continue
+                # Determine ceiling: the next ON event for the same machine
+                if pos + 1 < len(c_events_on):
+                    next_on_time = np.datetime64(pd.Timestamp(c_events_on['timestamp'].iloc[pos + 1]).to_datetime64(), 'ns')
+                    idx_next_on = min(n_points, int(np.searchsorted(timestamps, next_on_time)))
+                else:
+                    idx_next_on = n_points
+                on_meta.append((pos, idx_on, idx_next_on))
+
+            # OFFs viven en el pool GLOBAL (todos los eventos OFF de la serie):
+            # se conservan sus indices de fila para reutilizar used_off_indices.
+            off_cands = []
+            for off_i, ev_off in off_pool.iterrows():
+                if off_i in used_off_indices:
+                    continue
+                ev_off_time = np.datetime64(pd.Timestamp(ev_off['timestamp']).to_datetime64(), 'ns')
+                off_cands.append((off_i, int(np.searchsorted(timestamps, ev_off_time)),
+                                  abs(float(ev_off.get('delta_P', -nominal_p)))))
+
+            n_on, n_cand = len(on_meta), len(off_cands)
+            feasible = np.zeros((n_on, n_cand), dtype=bool)
+            cost = np.full((n_on, n_cand), 1e6, dtype=float)
+            for r, (pos, idx_on, idx_next_on) in enumerate(on_meta):
+                if idx_on is None:
+                    continue
+                span = max(1, idx_next_on - idx_on)
+                for k, (_oi, idx_off, mag) in enumerate(off_cands):
+                    if idx_off <= idx_on or idx_off > idx_next_on:
+                        continue
+                    if not (0.5 * nominal_p <= mag <= 2.5 * nominal_p):
+                        continue
+                    feasible[r, k] = True
+                    cost[r, k] = (0.7 * abs(mag - nominal_p) / nominal_p
+                                  + 0.3 * (idx_off - idx_on) / span)
+
+            # Secuencial = primer OFF candidato libre (comportamiento historico,
+            # proxy de "OFF mas cercano" dentro de la ventana del arranque).
+            greedy, _taken = {}, set()
+            for r in range(n_on):
+                if on_meta[r][1] is None:
+                    continue
+                for k in range(n_cand):
+                    if k in _taken or not feasible[r, k]:
+                        continue
+                    greedy[r] = k
+                    _taken.add(k)
+                    break
+
+            hung = self._hungarian_assign(cost, feasible) if n_cand else None
+            tot_g = float(sum(cost[r, k] for r, k in greedy.items()))
+            tot_h = float(sum(cost[r, k] for r, k in hung.items())) \
+                if hung is not None else None
+            chosen, used_method = greedy, 'sequential'
+            if pairing_method == 'hungarian' and hung is not None:
+                chosen, used_method = hung, 'hungarian'
+            elif pairing_method == 'auto' and hung is not None:
+                # Mas pares primero; a igualdad de pares, menor coste total.
+                if (len(hung), -tot_h) > (len(greedy), -tot_g):
+                    chosen, used_method = hung, 'hungarian'
+            _rep = self._pairing_report
+            _rep['pairs'] += len(chosen)
+            _rep['cost'] += float(sum(cost[r, k] for r, k in chosen.items()))
+            _rep['cost_sequential'] += tot_g
+            _rep['cost_hungarian'] += tot_h if tot_h is not None else 0.0
+            if used_method == 'hungarian':
+                _rep['machines_hungarian'] += 1
+
             # Pair each ON event with its corresponding OFF transition
             # NOTE: c_events_on was reset_index(drop=True) -> on_i is 0..N-1
             # positional, so use pos (enumerate) for next-ON ceiling.
@@ -858,34 +984,13 @@ class NILMEngine:
                 if disagg_power[c][idx_on] > 0:
                     continue
 
-                # Determine ceiling: the next ON event for the same machine
-                if pos + 1 < len(c_events_on):
-                    next_on_time = np.datetime64(pd.Timestamp(c_events_on['timestamp'].iloc[pos + 1]).to_datetime64(), 'ns')
-                    idx_next_on = min(n_points, np.searchsorted(timestamps, next_on_time))
-                else:
-                    idx_next_on = n_points
-
-                # Look for a candidate OFF event between idx_on and idx_next_on.
-                # OFFs viven en el pool GLOBAL (todos los eventos OFF de la serie):
-                # tomamos el primer OFF sin usar en-window cuya magnitud ~= nominal_p,
-                # para que una máquina pequeña no robe el OFF de una grande.
+                # MEJORA #8: el OFF emparejado lo decide la asignacion (optima
+                # o secuencial) calculada antes del bucle.
                 matched_off_idx = None
                 best_off_row_idx = None
-
-                for off_i, ev_off in off_pool.iterrows():
-                    if off_i in used_off_indices:
-                        continue
-                    ev_off_time = np.datetime64(pd.Timestamp(ev_off['timestamp']).to_datetime64(), 'ns')
-                    idx_off = int(np.searchsorted(timestamps, ev_off_time))
-                    if not (idx_on < idx_off <= idx_next_on):
-                        if idx_off > idx_next_on:
-                            break
-                        continue
-                    mag = abs(float(ev_off.get('delta_P', -nominal_p)))
-                    if 0.5 * nominal_p <= mag <= 2.5 * nominal_p:
-                        matched_off_idx = idx_off
-                        best_off_row_idx = off_i
-                        break
+                _sel = chosen.get(pos)
+                if _sel is not None:
+                    best_off_row_idx, matched_off_idx = off_cands[_sel][0], off_cands[_sel][1]
 
                 if matched_off_idx is not None:
                     end_idx = matched_off_idx
@@ -976,6 +1081,20 @@ class NILMEngine:
                 "dist_ratio": round(float(info.get('dist_ratio', 0.0)), 3),
                 "phase_imbalance": round(float(info.get('phase_imbalance', 0.0)), 3)
             })
+
+        # MEJORA #8: metodo efectivo del pareo (coherente tambien si se llama
+        # a disaggregate_load directamente, sin pasar por analyze_dataset).
+        _rep = self._pairing_report
+        if _rep:
+            _mh = int(_rep.get('machines_hungarian', 0))
+            _rep['method'] = ('hungarian' if _mh and _mh == len(clusters)
+                              else 'mixed' if _mh else 'sequential')
+            _rep['machines_total'] = len(clusters)
+            _cs = float(_rep.get('cost_sequential', 0.0))
+            _rep['improved_pct'] = (
+                round((_cs - float(_rep.get('cost', 0.0))) / _cs * 100.0, 2)
+                if _cs > 1e-12 else 0.0
+            )
 
         return disagg_power, baseline_curve, timeline_events, machine_stats
 
@@ -2199,7 +2318,8 @@ class NILMEngine:
                         max_states: int = 3,
                         labels: dict = None,
                         auto_k: bool = False,
-                        reuse_model: bool = False) -> Dict[str, Any]:
+                        reuse_model: bool = False,
+                        pairing_method: str = "auto") -> Dict[str, Any]:
         """
         Executes full NILM pipeline and returns structured JSON-ready results.
         """
@@ -2263,8 +2383,22 @@ class NILMEngine:
             )
         else:
             disagg_power, baseline_curve, timeline, machine_stats = self.disaggregate_load(
-                df_work, events_clustered, cluster_info
+                df_work, events_clustered, cluster_info,
+                pairing_method=pairing_method
             )
+
+        # MEJORA #8: informe del pareo ON/OFF (asignacion optima vs secuencial).
+        pairing = dict(getattr(self, '_pairing_report', {}) or {})
+        if pairing:
+            _mach_h = int(pairing.get('machines_hungarian', 0))
+            _n_mach = len(cluster_info)
+            pairing['method'] = ('hungarian' if _mach_h and _mach_h == _n_mach
+                                 else 'mixed' if _mach_h else 'sequential')
+            pairing['machines_total'] = _n_mach
+            _cs = float(pairing.get('cost_sequential', 0.0))
+            pairing['improved_pct'] = (round((_cs - float(pairing.get('cost', 0.0)))
+                                             / _cs * 100.0, 2)
+                                       if _cs > 1e-12 else 0.0)
 
         # Prepare 24h Hourly Activity Heatmap
         hourly_distribution = []
@@ -2398,6 +2532,7 @@ class NILMEngine:
             "standby": standby,
             "residual_anomalies": residual_anomalies,
             "cost": cost_report,
+            "pairing": pairing,
             "fhmm_enabled": use_fhmm,
             "multi_state_models": {
                 str(c): {

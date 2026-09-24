@@ -249,6 +249,15 @@ class AnalyzeHandler(BaseHandler):
             else:
                 reuse_model = bool(reuse_model_raw)
 
+            # MEJORA #8: metodo de pareo ON/OFF (auto | hungarian | sequential)
+            pairing_raw = req_data.get("pairing_method")
+            if pairing_raw is None:
+                pairing_method = self.get_argument("pairing_method", "auto").strip().lower()
+            else:
+                pairing_method = str(pairing_raw).strip().lower()
+            if pairing_method not in ("auto", "hungarian", "sequential"):
+                raise ValueError("pairing_method debe ser auto, hungarian o sequential")
+
             # Manual Ground-Truth labels persisted for this dataset (or passed in request)
             labels = req_data.get("labels")
             if not labels or not isinstance(labels, dict):
@@ -264,7 +273,8 @@ class AnalyzeHandler(BaseHandler):
                 max_states=max_states,
                 labels=labels,
                 auto_k=auto_k,
-                reuse_model=reuse_model
+                reuse_model=reuse_model,
+                pairing_method=pairing_method
             )
             self.write_json({"status": "success", "data": result})
         except ValueError as e:

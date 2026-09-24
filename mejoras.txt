@@ -67,7 +67,15 @@ B. CLUSTERING Y DETECCION DE EVENTOS
     Ahora los eventos se emparejan por clustering y orden temporal.
     El algoritmo hungaro empareja cada ON con su OFF mas plausible
     (magnitud + cercania temporal) -> series desagregadas mas limpias.
-    Impacto: MEDIO | Esfuerzo: MEDIO | Estado: PENDIENTE
+    Impacto: MEDIO | Esfuerzo: MEDIO | Estado: HECHA (2026-09-23) —
+    _hungarian_assign (scipy linear_sum_assignment) sobre la matriz de
+    candidatos factibles (OFF posterior al ON y <= siguiente ON de la
+    maquina, magnitud en [0.5, 2.5]x nominal) con coste
+    0.7*|mag-nominal|/nominal + 0.3*desfase relativo; parametro
+    pairing_method (auto|hungarian|sequential): 'auto' elige el de menor
+    coste total con al menos tantos pares (nunca peor que el historico) e
+    informe 'pairing' (metodo, pares, costes, % mejora); selector en el
+    panel + nota del resultado.
 
 ---------------------------------------------------------------------
 C. VALIDACION Y BENCHMARKING (aprovechando el PASO 3)
@@ -278,6 +286,7 @@ PowerQualityHandler (Tornado) + pestaña frontend.
  #11 metrica de transiciones y #12 intervalos de confianza (seccion C),
  #14 anomalias sobre el residuo, #15 calidad por energia por equipo,
  #16 coste economico por equipo y #17 persistencia de modelos;
+ 2026-09-23 (seccion B): #8 pareo ON/OFF por asignacion hungara;
  2026-09-22: #13 fugas/standby implementada;
  anterior 2026-09-21: firmas extendidas y calidad, hoy #20/#21)
 =====================================================================
