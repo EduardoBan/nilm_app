@@ -936,10 +936,176 @@ class NILMEngine:
             return None
         return {int(r): int(c) for r, c in zip(rows, cols) if feasible[r, c]}
 
-    def disaggregate_load(self, df_work: pd.DataFrame, 
-                          events: pd.DataFrame, 
+    @staticmethod
+    def _apply_duration_priors(df_work, disagg_power, cluster_info,
+                               timeline_events, min_on_minutes=0.0,
+                               min_off_minutes=0.0,
+                               state_levels=None):
+        """MEJORA #3: estabiliza operating runs antes de construir el Gantt.
+
+        Descarta tramos ON cortos y funde pausas OFF entre dos tramos ON. La
+        misma funcion se usa en ON/OFF y FHMM. Valores 0 preservan el
+        comportamiento anterior.
+        """
+        min_on = max(0.0, float(min_on_minutes or 0.0))
+        min_off = max(0.0, float(min_off_minutes or 0.0))
+        report = {
+            'enabled': bool(min_on or min_off),
+            'min_on_minutes': round(min_on, 3),
+            'min_off_minutes': round(min_off, 3),
+            'on_intervals_before': 0, 'on_intervals_after': 0,
+            'short_on_intervals_removed': 0,
+            'off_gaps_before': 0, 'off_gaps_after': 0,
+            'short_off_gaps_bridged': 0,
+            'on_minutes_removed': 0.0, 'off_minutes_bridged': 0.0,
+            'machines_affected': 0,
+        }
+        if not report['enabled']:
+            return timeline_events, report
+
+        timestamps = pd.to_datetime(df_work['timestamp']).to_numpy(
+            dtype='datetime64[ns]')
+        n_points = len(timestamps)
+
+        def runs(mask):
+            padded = np.concatenate(([False], np.asarray(mask, dtype=bool),
+                                     [False]))
+            changes = np.flatnonzero(padded[1:] != padded[:-1])
+            return list(zip(changes[0::2], changes[1::2]))
+
+        def minutes(start, end):
+            # Misma convencion inclusiva que el Gantt historico: start..end-1.
+            return max(0.0, float((timestamps[end - 1] - timestamps[start])
+                                  / np.timedelta64(1, 'm')))
+
+        rebuilt = []
+        for c in sorted(cluster_info.keys()):
+            power = np.asarray(disagg_power[c], dtype=float).copy()
+            before = runs(power > 0.05)
+            original_off_gaps = runs(power <= 0.05)
+            report['on_intervals_before'] += len(before)
+            report['off_gaps_before'] += sum(
+                1 for start, end in original_off_gaps
+                if start > 0 and end < n_points
+            )
+            for start, end in before:
+                duration = minutes(start, end)
+                if min_on and duration < min_on:
+                    power[start:end] = 0.0
+                    report['short_on_intervals_removed'] += 1
+                    report['on_minutes_removed'] += duration
+
+            for start, end in original_off_gaps:
+                if start <= 0 or end >= n_points:
+                    continue
+                # Si uno de los extremos era un ON corto ya eliminado, este
+                # hueco no puede "revivirlo" mediante la fusion OFF.
+                if power[start - 1] <= 0.05 or power[end] <= 0.05:
+                    continue
+                duration = minutes(start, end)
+                if min_off and duration <= min_off:
+                    power[start:end] = max(
+                        0.5, float(cluster_info[c]['avg_delta_p']))
+                    report['short_off_gaps_bridged'] += 1
+                    report['off_minutes_bridged'] += duration
+
+            active = power > 0.05
+            after = runs(active)
+            report['on_intervals_after'] += len(after)
+            report['off_gaps_after'] += sum(
+                1 for start, end in runs(~active)
+                if start > 0 and end < n_points
+            )
+            changed = not np.array_equal(power, np.asarray(
+                disagg_power[c], dtype=float))
+            if changed:
+                report['machines_affected'] += 1
+            disagg_power[c] = power.astype(np.float32)
+
+            # Conserva state_level/state de FHMM para reconstruir sus tramos.
+            state_at = np.full(n_points, -1, dtype=int)
+            source_at = [None] * n_points
+            for source in [item for item in timeline_events
+                           if item.get('machine_id') == c]:
+                try:
+                    start_dt = pd.Timestamp(source['start_timestamp'])
+                    end_dt = pd.Timestamp(source['end_timestamp'])
+                    state = int(source.get('state_level', -1))
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if state < 0:
+                    continue
+                start = int(np.searchsorted(
+                    timestamps, np.datetime64(start_dt.to_datetime64(), 'ns')))
+                end = min(n_points, int(np.searchsorted(
+                    timestamps, np.datetime64(end_dt.to_datetime64(), 'ns'))) + 1)
+                for idx in range(max(0, start), end):
+                    if state_at[idx] < 0:
+                        state_at[idx], source_at[idx] = state, source
+
+            # En FHMM los puntos creados al unir OFF no tienen estado previo:
+            # se etiqueta con el nivel mas cercano a la potencia nominal.
+            levels = (state_levels or {}).get(c, [cluster_info[c]['avg_delta_p']])
+            for run_start, run_end in after:
+                if levels:
+                    unknown = np.flatnonzero(state_at[run_start:run_end] < 0)
+                    if len(unknown):
+                        nominal = max(0.5, float(cluster_info[c]['avg_delta_p']))
+                        state = min(range(len(levels)), key=lambda i: abs(
+                            float(levels[i]) - nominal))
+                        state_at[run_start + unknown] = state
+                idx = run_start
+                while idx < run_end:
+                    state = int(state_at[idx])
+                    end = idx + 1
+                    if state >= 0:
+                        while end < run_end and state_at[end] == state:
+                            end += 1
+                    else:
+                        # Camino ON/OFF: no hay state_level; un run activo es
+                        # un unico intervalo y no debe fragmentarse por muestra.
+                        while end < run_end and state_at[end] < 0:
+                            end += 1
+                    start_dt = pd.Timestamp(timestamps[idx])
+                    end_dt = pd.Timestamp(timestamps[end - 1])
+                    duration = minutes(idx, end)
+                    if duration >= 0.1:
+                        level = float(np.mean(power[idx:end]))
+                        source = source_at[idx] if state >= 0 else None
+                        item = dict(source) if source else {
+                            'machine_id': c,
+                            'machine_name': cluster_info[c]['name'],
+                            'category': cluster_info[c]['category'],
+                            'color': cluster_info[c]['color'],
+                        }
+                        item.update({
+                            'start_time': start_dt.strftime('%H:%M:%S'),
+                            'end_time': end_dt.strftime('%H:%M:%S'),
+                            'start_timestamp': str(start_dt),
+                            'end_timestamp': str(end_dt),
+                            'duration_minutes': round(duration, 1),
+                            'avg_power_kw': round(level, 2),
+                            'energy_kwh': round(level * duration / 60.0, 3),
+                        })
+                        if state >= 0:
+                            item['state_level'] = state
+                        else:
+                            item.pop('state_level', None)
+                            item.pop('state', None)
+                        rebuilt.append(item)
+                    idx = end
+
+        rebuilt.sort(key=lambda item: item['start_timestamp'])
+        report['on_minutes_removed'] = round(report['on_minutes_removed'], 1)
+        report['off_minutes_bridged'] = round(report['off_minutes_bridged'], 1)
+        return rebuilt, report
+
+    def disaggregate_load(self, df_work: pd.DataFrame,
+                          events: pd.DataFrame,
                           cluster_info: Dict[int, Any],
-                          pairing_method: str = 'auto'):
+                          pairing_method: str = 'auto',
+                          min_on_minutes: float = 0.0,
+                          min_off_minutes: float = 0.0):
         """
         Continuous load disaggregation: Reconstructs the power time-series
         for each detected machine using strict ON-OFF event pairing and operational state timeline (Gantt).
@@ -1163,6 +1329,11 @@ class NILMEngine:
                         "energy_kwh": round(energy_kwh, 3)
                     })
 
+        # MEJORA #3: estabilizar operating runs antes de baseline, Gantt y stats.
+        timeline_events, self._duration_prior_report = self._apply_duration_priors(
+            df_work, disagg_power, cluster_info, timeline_events,
+            min_on_minutes, min_off_minutes)
+
         # Calculate baseline power curve
         sum_disagg = np.zeros(n_points, dtype=np.float32)
         for c in clusters:
@@ -1282,7 +1453,9 @@ class NILMEngine:
         
         return machine_states
 
-    def disaggregate_load_fhmm(self, df_work, events, cluster_info, machine_states):
+    def disaggregate_load_fhmm(self, df_work, events, cluster_info,
+                               machine_states, min_on_minutes=0.0,
+                               min_off_minutes=0.0):
         """Inferencia MAP factorial para desagregacion multi-estado."""
         n_points = len(df_work)
         timestamps = pd.to_datetime(df_work['timestamp']).to_numpy(dtype='datetime64[ns]')
@@ -1345,6 +1518,19 @@ class NILMEngine:
             
             self._build_fhmm_segments(df_work, segments_start=segment_starts, segments_end=segment_ends, seg_states=segment_states, state_levels=state_levels, disagg_power=disagg_power, c=c, timeline_events=timeline_events, info=info)
             self._build_fhmm_stats(df_work, c=c, info=info, disagg_power=disagg_power, state_levels=state_levels, timeline_events=timeline_events, machine_stats=machine_stats)
+
+        # MEJORA #3: el helper preserva los state_level originales de FHMM.
+        timeline_events, self._duration_prior_report = self._apply_duration_priors(
+            df_work, disagg_power, cluster_info, timeline_events,
+            min_on_minutes, min_off_minutes, state_levels=machine_states)
+        if self._duration_prior_report.get('enabled'):
+            machine_stats = []
+            for c in clusters:
+                states = sorted(machine_states.get(
+                    c, [cluster_info[c]['avg_delta_p']]))
+                self._build_fhmm_stats(
+                    df_work, c, cluster_info[c], disagg_power, states,
+                    timeline_events, machine_stats)
 
         sum_disagg = np.zeros(n_points, dtype=np.float32)
         for c in clusters:
@@ -2453,7 +2639,9 @@ class NILMEngine:
                         auto_k: bool = False,
                         reuse_model: bool = False,
                         pairing_method: str = "auto",
-                        detection_method: str = "threshold") -> Dict[str, Any]:
+                        detection_method: str = "threshold",
+                        min_on_minutes: float = 0.0,
+                        min_off_minutes: float = 0.0) -> Dict[str, Any]:
         """
         Executes full NILM pipeline and returns structured JSON-ready results.
         """
@@ -2517,13 +2705,19 @@ class NILMEngine:
                 df_work, machine_states, cluster_info, events=events_clustered
             )
             disagg_power, baseline_curve, timeline, machine_stats = self.disaggregate_load_fhmm(
-                df_work, events_clustered, cluster_info, machine_states
+                df_work, events_clustered, cluster_info, machine_states,
+                min_on_minutes=min_on_minutes,
+                min_off_minutes=min_off_minutes
             )
         else:
             disagg_power, baseline_curve, timeline, machine_stats = self.disaggregate_load(
                 df_work, events_clustered, cluster_info,
-                pairing_method=pairing_method
+                pairing_method=pairing_method,
+                min_on_minutes=min_on_minutes,
+                min_off_minutes=min_off_minutes
             )
+
+        duration_prior = dict(getattr(self, '_duration_prior_report', {}) or {})
 
         # MEJORA #8: informe del pareo ON/OFF (asignacion optima vs secuencial).
         pairing = dict(getattr(self, '_pairing_report', {}) or {})
@@ -2671,6 +2865,7 @@ class NILMEngine:
             "residual_anomalies": residual_anomalies,
             "cost": cost_report,
             "pairing": pairing,
+            "duration_prior": duration_prior,
             "change_points": change_points,
             "fhmm_enabled": use_fhmm,
             "multi_state_models": {

@@ -97,6 +97,17 @@
       </div>
 
       <div class="control-group">
+        <label for="input-min-on" title="MEJORA #3: descarta encendidos falsos más cortos que esta duración antes de construir el Gantt. 0 desactiva el prior.">⏱️ Mín. ON (min):</label>
+        <input id="input-min-on" class="select-input" type="number" min="0" max="120" step="0.5" value="0">
+      </div>
+
+      <div class="control-group">
+        <label for="input-min-off" title="MEJORA #3: une pausas OFF menores o iguales a esta duración cuando quedan entre dos tramos activos. 0 desactiva el prior.">⏸️ Mín. OFF (min):</label>
+        <input id="input-min-off" class="select-input" type="number" min="0" max="120" step="0.5" value="0">
+      </div>
+      <span id="duration-prior-note" class="k-opt-note" hidden></span>
+
+      <div class="control-group">
         <label for="slider-threshold">⚡ Umbral ΔI:</label>
         <div class="slider-wrap">
           <input type="range" id="slider-threshold" min="0.5" max="10.0" value="2.0" step="0.5">

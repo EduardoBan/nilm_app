@@ -360,6 +360,8 @@ export interface NILMAnalysisResult {
   /* Opción A: modelado multi-estado FHMM */
   fhmm_enabled?: boolean;
   max_states?: number;
+  min_on_minutes?: number;
+  min_off_minutes?: number;
   multi_state_models?: Record<string, MultiStateModel>;
   /* MEJORA #6: seleccion automatica de K (Silhouette/Davies-Bouldin) */
   k_selection?: KSelection | null;
@@ -369,6 +371,24 @@ export interface NILMAnalysisResult {
   pairing?: PairingReport | null;
   /* MEJORA #7: informe del detector de cambios */
   change_points?: ChangePointsReport | null;
+  /* MEJORA #3: estabilizacion de duraciones ON/OFF */
+  duration_prior?: DurationPriorReport | null;
+}
+
+/* MEJORA #3: priors de duracion para estabilizar el Gantt */
+export interface DurationPriorReport {
+  enabled: boolean;
+  min_on_minutes: number;
+  min_off_minutes: number;
+  on_intervals_before: number;
+  on_intervals_after: number;
+  short_on_intervals_removed: number;
+  off_gaps_before: number;
+  off_gaps_after: number;
+  short_off_gaps_bridged: number;
+  on_minutes_removed: number;
+  off_minutes_bridged: number;
+  machines_affected: number;
 }
 
 /* MEJORA #6: seleccion automatica de K */
@@ -441,6 +461,9 @@ export interface AnalysisParams {
   pairing_method?: 'auto' | 'hungarian' | 'sequential';
   /* MEJORA #7: detector de cambios (umbral fijo / CUSUM / híbrido) */
   detection_method?: 'threshold' | 'cusum' | 'hybrid';
+  /* MEJORA #3: priors opcionales de duración ON/OFF (0 = desactivado) */
+  min_on_minutes?: number;
+  min_off_minutes?: number;
 }
 
 /* MEJORA #9/#10: benchmark de algoritmos + estabilidad de umbrales (frontend-only) */

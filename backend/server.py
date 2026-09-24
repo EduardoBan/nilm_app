@@ -267,6 +267,19 @@ class AnalyzeHandler(BaseHandler):
             if detection_method not in ("threshold", "cusum", "hybrid"):
                 raise ValueError("detection_method debe ser threshold, cusum o hybrid")
 
+            # MEJORA #3: priors de duracion ON/OFF para estabilizar el Gantt.
+            min_on_raw = req_data.get("min_on_minutes", "0")
+            min_off_raw = req_data.get("min_off_minutes", "0")
+            try:
+                min_on_minutes = float(min_on_raw) if min_on_raw is not None else 0.0
+                min_off_minutes = float(min_off_raw) if min_off_raw is not None else 0.0
+            except (TypeError, ValueError):
+                raise ValueError("min_on_minutes y min_off_minutes deben ser numericos")
+            if not 0.0 <= min_on_minutes <= 120.0:
+                raise ValueError("min_on_minutes debe estar entre 0 y 120")
+            if not 0.0 <= min_off_minutes <= 120.0:
+                raise ValueError("min_off_minutes debe estar entre 0 y 120")
+
             # Manual Ground-Truth labels persisted for this dataset (or passed in request)
             labels = req_data.get("labels")
             if not labels or not isinstance(labels, dict):
@@ -284,7 +297,9 @@ class AnalyzeHandler(BaseHandler):
                 auto_k=auto_k,
                 reuse_model=reuse_model,
                 pairing_method=pairing_method,
-                detection_method=detection_method
+                detection_method=detection_method,
+                min_on_minutes=min_on_minutes,
+                min_off_minutes=min_off_minutes
             )
             self.write_json({"status": "success", "data": result})
         except ValueError as e:

@@ -1089,3 +1089,92 @@ def test_hybrid_dedupes_threshold_events_and_analyze_exposes_report():
     cp_def = res_def.get("change_points")
     assert cp_def["requested"] == "threshold"
     assert cp_def["cusum_candidates"] == 0
+
+
+def _duration_prior_fixture():
+    """Una maquina con un ON corto y una pausa OFF corta entre ON validos."""
+    n = 30
+    ts = pd.date_range("2024-01-01", periods=n, freq="1min")
+    power = np.zeros(n, dtype=np.float32)
+    power[0:5] = 10.0       # 4 min segun la convencion inclusiva del Gantt
+    power[10:16] = 10.0      # 5 min: ON valido
+    power[20:27] = 10.0      # 6 min: ON valido
+    info = {0: {
+        "name": "Motor de prueba", "category": "Prueba",
+        "color": "#123456", "avg_delta_p": 10.0,
+    }}
+    timeline = [{
+        "machine_id": 0, "machine_name": "Motor de prueba",
+        "category": "Prueba", "color": "#123456",
+        "start_time": ts[0].strftime("%H:%M:%S"),
+        "end_time": ts[4].strftime("%H:%M:%S"),
+        "start_timestamp": str(ts[0]), "end_timestamp": str(ts[4]),
+        "duration_minutes": 4.0, "avg_power_kw": 10.0,
+        "energy_kwh": 0.667,
+    }, {
+        "machine_id": 0, "machine_name": "Motor de prueba",
+        "category": "Prueba", "color": "#123456",
+        "start_time": ts[10].strftime("%H:%M:%S"),
+        "end_time": ts[15].strftime("%H:%M:%S"),
+        "start_timestamp": str(ts[10]), "end_timestamp": str(ts[15]),
+        "duration_minutes": 5.0, "avg_power_kw": 10.0,
+        "energy_kwh": 0.833,
+    }, {
+        "machine_id": 0, "machine_name": "Motor de prueba",
+        "category": "Prueba", "color": "#123456",
+        "start_time": ts[20].strftime("%H:%M:%S"),
+        "end_time": ts[26].strftime("%H:%M:%S"),
+        "start_timestamp": str(ts[20]), "end_timestamp": str(ts[26]),
+        "duration_minutes": 6.0, "avg_power_kw": 10.0,
+        "energy_kwh": 1.0,
+    }]
+    return pd.DataFrame({"timestamp": ts}), {0: power}, info, timeline
+
+
+def test_duration_priors_default_and_filtering():
+    """MEJORA #3: 0 no altera el Gantt; filtra ON cortos y une OFF cortos."""
+    df, power, info, timeline = _duration_prior_fixture()
+    original_power = {c: values.copy() for c, values in power.items()}
+    same_timeline, report = NILMEngine._apply_duration_priors(
+        df, power, info, timeline, min_on_minutes=0.0, min_off_minutes=0.0)
+    assert same_timeline is timeline
+    assert all(np.array_equal(power[c], original_power[c]) for c in power)
+    assert report["enabled"] is False
+
+    stable, report = NILMEngine._apply_duration_priors(
+        df, power, info, timeline, min_on_minutes=5.0, min_off_minutes=2.0)
+    assert not np.any(power[0][0:5]), "el ON de 4 min debe desaparecer"
+    assert np.all(power[0][10:27] == 10.0), "la pausa OFF valida debe unirse"
+    assert report["short_on_intervals_removed"] == 1
+    assert report["short_off_gaps_bridged"] == 1
+    assert report["on_intervals_before"] == 3
+    assert report["on_intervals_after"] == 1
+    assert report["on_minutes_removed"] == 4.0
+    assert report["off_minutes_bridged"] == 1.0
+    assert len(stable) == 1
+    assert stable[0]["duration_minutes"] == 16.0
+    assert stable[0]["energy_kwh"] == 2.667
+    json.dumps(report, allow_nan=False)
+    json.dumps(stable, allow_nan=False)
+
+
+def test_duration_priors_published_by_analyze_both_modes():
+    """MEJORA #3: analyze_dataset publica el informe en ON/OFF y FHMM."""
+    eng = NILMEngine(_FakeDM(make_df_harm()))
+    common = dict(n_clusters=2, use_fhmm=False, power_threshold=0.5,
+                  current_threshold=2.0, min_on_minutes=70.0)
+    normal = eng.analyze_dataset("synthetic", **common)
+    report = normal.get("duration_prior")
+    assert report and report["enabled"] is True
+    assert report["min_on_minutes"] == 70.0
+    assert report["short_on_intervals_removed"] >= 1
+    assert len(normal["timeline_intervals"]) < len(normal["disaggregated_machines"][0]["power_kw"])
+    json.dumps(report, allow_nan=False)
+
+    fhmm = eng.analyze_dataset("synthetic", **{**common, "use_fhmm": True})
+    report_f = fhmm.get("duration_prior")
+    assert report_f and report_f["enabled"] is True
+    assert report_f["short_on_intervals_removed"] >= 1
+    for interval in fhmm["timeline_intervals"]:
+        assert interval["duration_minutes"] >= 70.0
+    json.dumps(fhmm, allow_nan=False)

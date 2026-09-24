@@ -337,6 +337,13 @@ class NILMApp {
     const detectionSelect = document.getElementById('select-detection') as HTMLSelectElement | null;
     const detection_method = ((detectionSelect && detectionSelect.value) || 'threshold') as
       'threshold' | 'cusum' | 'hybrid';
+    // MEJORA #3: duración mínima ON y fusión de pausas OFF. Cero = sin prior.
+    const minOnInput = document.getElementById('input-min-on') as HTMLInputElement | null;
+    const minOffInput = document.getElementById('input-min-off') as HTMLInputElement | null;
+    const min_on_minutes = minOnInput
+      ? Math.min(120, Math.max(0, Number(minOnInput.value) || 0)) : 0;
+    const min_off_minutes = minOffInput
+      ? Math.min(120, Math.max(0, Number(minOffInput.value) || 0)) : 0;
 
     this.showLoading(true);
     try {
@@ -351,7 +358,9 @@ class NILMApp {
         auto_k,
         reuse_model,
         pairing_method,
-        detection_method
+        detection_method,
+        min_on_minutes,
+        min_off_minutes
       });
 
       this.updateApplianceTable();
@@ -397,6 +406,21 @@ class NILMApp {
           cpNote.hidden = false;
         } else {
           cpNote.hidden = true;
+        }
+      }
+      // MEJORA #3: resumen visible de estabilización por duración.
+      const durationNote = document.getElementById('duration-prior-note');
+      const duration = this.analysis.duration_prior;
+      if (durationNote) {
+        if (duration && duration.enabled) {
+          const removed = duration.short_on_intervals_removed
+            ? ` · ${duration.short_on_intervals_removed} ON cortos fuera` : '';
+          const bridged = duration.short_off_gaps_bridged
+            ? ` · ${duration.short_off_gaps_bridged} pausas unidas` : '';
+          durationNote.textContent = `Priors: ON ≥ ${duration.min_on_minutes} min · OFF ≤ ${duration.min_off_minutes} min${removed}${bridged}`;
+          durationNote.hidden = false;
+        } else {
+          durationNote.hidden = true;
         }
       }
       const warn = (this.analysis as any).warning;
