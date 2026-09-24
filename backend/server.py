@@ -360,7 +360,10 @@ class FrontendStaticHandler(tornado.web.StaticFileHandler):
         self.set_header("Cache-Control", "no-cache, must-revalidate")
 
 def make_app():
-    frontend_dir = os.path.join(BASE_DIR, "frontend")
+    app_home = os.environ.get("NILM_APP_HOME", BASE_DIR)
+    frontend_dir = os.path.join(app_home, "frontend")
+    if not os.path.isdir(frontend_dir):
+        frontend_dir = os.path.join(BASE_DIR, "frontend")
     return tornado.web.Application([
         (r"/api/datasets", DatasetsHandler),
         (r"/api/summary", SummaryHandler),

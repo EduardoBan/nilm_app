@@ -27,6 +27,7 @@ backups/
 
 # Salidas generadas
 reports/
+install/
 .pytest_cache/
 node_modules/
 

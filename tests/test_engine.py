@@ -1098,7 +1098,7 @@ def _duration_prior_fixture():
     power = np.zeros(n, dtype=np.float32)
     power[0:5] = 10.0       # 4 min segun la convencion inclusiva del Gantt
     power[10:16] = 10.0      # 5 min: ON valido
-    power[20:27] = 10.0      # 6 min: ON valido
+    power[18:27] = 10.0      # 8 min: ON valido, unido tras 1 min OFF
     info = {0: {
         "name": "Motor de prueba", "category": "Prueba",
         "color": "#123456", "avg_delta_p": 10.0,
@@ -1122,11 +1122,11 @@ def _duration_prior_fixture():
     }, {
         "machine_id": 0, "machine_name": "Motor de prueba",
         "category": "Prueba", "color": "#123456",
-        "start_time": ts[20].strftime("%H:%M:%S"),
+        "start_time": ts[18].strftime("%H:%M:%S"),
         "end_time": ts[26].strftime("%H:%M:%S"),
-        "start_timestamp": str(ts[20]), "end_timestamp": str(ts[26]),
-        "duration_minutes": 6.0, "avg_power_kw": 10.0,
-        "energy_kwh": 1.0,
+        "start_timestamp": str(ts[18]), "end_timestamp": str(ts[26]),
+        "duration_minutes": 8.0, "avg_power_kw": 10.0,
+        "energy_kwh": 1.333,
     }]
     return pd.DataFrame({"timestamp": ts}), {0: power}, info, timeline
 
@@ -1162,13 +1162,13 @@ def test_duration_priors_published_by_analyze_both_modes():
     """MEJORA #3: analyze_dataset publica el informe en ON/OFF y FHMM."""
     eng = NILMEngine(_FakeDM(make_df_harm()))
     common = dict(n_clusters=2, use_fhmm=False, power_threshold=0.5,
-                  current_threshold=2.0, min_on_minutes=70.0)
+                  current_threshold=2.0, min_on_minutes=90.0)
     normal = eng.analyze_dataset("synthetic", **common)
     report = normal.get("duration_prior")
     assert report and report["enabled"] is True
-    assert report["min_on_minutes"] == 70.0
+    assert report["min_on_minutes"] == 90.0
     assert report["short_on_intervals_removed"] >= 1
-    assert len(normal["timeline_intervals"]) < len(normal["disaggregated_machines"][0]["power_kw"])
+    assert len(normal["timeline_intervals"]) < len(normal["disaggregated_machines"][0]["data"])
     json.dumps(report, allow_nan=False)
 
     fhmm = eng.analyze_dataset("synthetic", **{**common, "use_fhmm": True})
@@ -1176,5 +1176,5 @@ def test_duration_priors_published_by_analyze_both_modes():
     assert report_f and report_f["enabled"] is True
     assert report_f["short_on_intervals_removed"] >= 1
     for interval in fhmm["timeline_intervals"]:
-        assert interval["duration_minutes"] >= 70.0
+        assert interval["duration_minutes"] >= 90.0
     json.dumps(fhmm, allow_nan=False)

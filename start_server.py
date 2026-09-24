@@ -7,6 +7,15 @@ import sys
 import webbrowser
 import tornado.ioloop
 
+# El runtime portable usa python*._pth y no hereda PYTHONPATH. La raíz de
+# la aplicación debe estar explícitamente en sys.path para encontrar backend.
+APP_HOME = os.environ.get("NILM_APP_HOME") or os.path.dirname(os.path.abspath(__file__))
+os.environ.setdefault("NILM_APP_HOME", APP_HOME)
+if APP_HOME not in sys.path:
+    sys.path.insert(0, APP_HOME)
+if getattr(sys, "frozen", False):
+    sys.path.insert(0, os.path.join(APP_HOME, "app"))
+
 if sys.platform == 'win32':
     try:
         sys.stdout.reconfigure(encoding='utf-8')
@@ -15,7 +24,7 @@ if sys.platform == 'win32':
 
 from backend.server import make_app
 
-PORT = 8000
+PORT = int(os.environ.get("NILM_PORT", "8000"))
 
 def main():
     app = make_app()

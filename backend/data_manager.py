@@ -15,14 +15,17 @@ class DataManager:
     """
     def __init__(self, data_dir=None, cache_dir=None):
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        default_data = r"C:\Users\local\Documents\IA\Energia\Data"
+        # En la distribucion portable el ejecutable fija NILM_APP_HOME; en
+        # desarrollo se conserva la carpeta de datos historica si existe.
+        app_home = os.environ.get("NILM_APP_HOME", base_dir)
+        default_data = os.path.join(app_home, "Data")
+        bundled_data = os.path.join(base_dir, "Data")
+        if not os.path.exists(default_data) and os.path.exists(bundled_data):
+            default_data = bundled_data
         if data_dir is None:
-            if os.path.exists(default_data):
-                data_dir = default_data
-            else:
-                data_dir = os.path.join(base_dir, "Data")
+            data_dir = default_data if os.path.exists(default_data) else os.path.join(app_home, "Data")
         if cache_dir is None:
-            cache_dir = os.path.join(base_dir, "cache")
+            cache_dir = os.path.join(app_home, "cache")
 
         self.data_dir = data_dir
         self.cache_dir = cache_dir
@@ -76,7 +79,11 @@ class DataManager:
     # user's custom equipment names survive restarts and re-analyses.
     # ------------------------------------------------------------------
     def _labels_file(self) -> str:
-        return os.path.join(os.path.dirname(os.path.abspath(__file__)), "load_labels.json")
+        # Las etiquetas son estado de usuario: en modo congelado deben vivir
+        # junto a la aplicacion, no en el directorio temporal de PyInstaller.
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        app_home = os.environ.get("NILM_APP_HOME", base_dir)
+        return os.path.join(app_home, "backend", "load_labels.json")
 
     def _read_labels(self) -> dict:
         try:
