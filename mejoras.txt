@@ -137,7 +137,14 @@ D. NUEVOS ANALISIS DE VALOR
     Guardar centroides/estados por sitio y reutilizarlos en la siguiente
     medicion (etiquetado consistente entre datasets, menos
     re-clasificaciones).
-    Impacto: MEDIO | Esfuerzo: MEDIO | Estado: PENDIENTE
+    Impacto: MEDIO | Esfuerzo: MEDIO | Estado: HECHA (2026-09-23) —
+    _feature_raw + _feature_frame(return_scaler) compartidos; save_model/
+    load_model en cache/models/<slug>.json (versionado, gitignored,
+    escritura atomica) con scaler+centroides+k+features+nombres;
+    cluster_appliances(saved_model=) asigna por nearest-centroid y
+    conserva nombre/categoria/color (GT manual tiene prioridad);
+    analyze_dataset(reuse_model=) + informe 'model_reuse'; checkbox
+    'Reusar modelo' en el panel y toast de estado.
 
 ---------------------------------------------------------------------
 E. SI SE CONSIGUE GROUND TRUTH (medidor por equipo)
@@ -269,8 +276,8 @@ PowerQualityHandler (Tornado) + pestaña frontend.
 =====================================================================
  FIN DEL REGISTRO DE MEJORAS (2026-09-23: #6 seleccion automatica de K,
  #11 metrica de transiciones y #12 intervalos de confianza (seccion C),
- #14 anomalias sobre el residuo, #15 calidad por equipo y
- #16 coste economico por equipo;
+ #14 anomalias sobre el residuo, #15 calidad por energia por equipo,
+ #16 coste economico por equipo y #17 persistencia de modelos;
  2026-09-22: #13 fugas/standby implementada;
  anterior 2026-09-21: firmas extendidas y calidad, hoy #20/#21)
 =====================================================================

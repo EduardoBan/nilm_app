@@ -1,3 +1,7 @@
+import json
+import os
+import re
+
 import pandas as pd
 import numpy as np
 from sklearn.cluster import KMeans, DBSCAN
@@ -282,15 +286,20 @@ class NILMEngine:
         # (df_work has P_total/delta_P/delta_I/H_total; events has event rows).
         return df_work, events
 
-    @staticmethod
-    def _feature_frame(events):
-        """Vector de features estandarizado del clustering.
+    # Vector de features compartido: clustering, seleccion automatica de K
+    # (MEJORA #6) y persistencia de modelos (MEJORA #17).
+    _FEATURES = ['abs_delta_P', 'abs_delta_I', 'THD_avg', 'abs_delta_Q',
+                 'abs_delta_H3', 'abs_delta_H5', 'abs_delta_H7',
+                 'abs_delta_cosphi', 'feat_inrush', 'phase_concentration']
 
-        Compartido por cluster_appliances y por la seleccion automatica de K
-        (MEJORA #6) para que ambos evaluen exactamente las mismas columnas.
+    @staticmethod
+    def _feature_raw(events):
+        """Monta las columnas crudas (sin escalar) del vector de features.
+
+        Mutates `events` adding the abs_* columns and returns the raw matrix.
         Magnitudes absolutas para que los eventos ON y OFF del mismo equipo
         caigan juntos; incluye armonicos transitorios (#5) y firmas
-        extendidas (#20).
+        extendidas (#20). Base del scaler que se persiste en la MEJORA #17.
         """
         events['abs_delta_P'] = events['delta_P'].abs()
         events['abs_delta_I'] = events['delta_I'].abs()
@@ -316,11 +325,23 @@ class NILMEngine:
         )
         if 'phase_concentration' not in events:
             events['phase_concentration'] = 1.0 / 3.0
-        features = ['abs_delta_P', 'abs_delta_I', 'THD_avg', 'abs_delta_Q',
-                    'abs_delta_H3', 'abs_delta_H5', 'abs_delta_H7',
-                    'abs_delta_cosphi', 'feat_inrush', 'phase_concentration']
-        X = events[features].fillna(0).values
-        return StandardScaler().fit_transform(X)
+        return events[NILMEngine._FEATURES].fillna(0).values
+
+    @staticmethod
+    def _feature_frame(events, return_scaler=False):
+        """Vector de features estandarizado del clustering.
+
+        Compartido por cluster_appliances y por la seleccion automatica de K
+        (MEJORA #6) para que ambos evaluen exactamente las mismas columnas.
+        Con return_scaler devuelve (X_scaled, scaler) para que el clustering
+        pueda persistir media/desviacion del scaler (MEJORA #17).
+        """
+        X = NILMEngine._feature_raw(events)
+        scaler = StandardScaler().fit(X)
+        X_scaled = scaler.transform(X)
+        if return_scaler:
+            return X_scaled, scaler
+        return X_scaled
 
     @staticmethod
     def _auto_select_k(X_scaled, k_min=2, k_max=8):
@@ -372,15 +393,119 @@ class NILMEngine:
             return {'k': 2, 'silhouette': None, 'davies_bouldin': None,
                     'candidates': [], 'method': 'fallback (error interno).'}
 
-    def cluster_appliances(self, events: pd.DataFrame, 
+    # ------------------------------------------------------------------
+    # MEJORA #17: persistencia de modelos (centroides + scaler + etiquetas)
+    # Se guardan por dataset en cache/models/<slug>.json (gitignored) para
+    # que la siguiente medicion asigne los eventos con el mismo scaler y
+    # conserve los nombres/colores (etiquetado consistente entre datasets).
+    # ------------------------------------------------------------------
+    _MODEL_VERSION = 1
+
+    def _models_dir(self) -> str:
+        base = getattr(self.dm, 'cache_dir', None)
+        if not base:
+            base = os.path.join(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__))), 'cache')
+        d = os.path.join(base, 'models')
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError:
+            pass
+        return d
+
+    def _model_path(self, dataset_id: str) -> str:
+        slug = re.sub(r'[^a-z0-9_\-]+', '_',
+                      str(dataset_id).lower()).strip('_') or 'dataset'
+        return os.path.join(self._models_dir(), f'{slug}.json')
+
+    @classmethod
+    def _model_compatible(cls, model) -> bool:
+        """True si el modelo guardado sirve para asignar por nearest-centroid."""
+        if not isinstance(model, dict):
+            return False
+        try:
+            if int(model.get('version', -1)) != cls._MODEL_VERSION:
+                return False
+        except (TypeError, ValueError):
+            return False
+        cents = model.get('centroids')
+        machines = model.get('machines')
+        scaler = model.get('scaler')
+        if not (isinstance(cents, list) and cents
+                and isinstance(machines, dict) and machines
+                and isinstance(scaler, dict)):
+            return False
+        if len(cents) != len(machines):
+            return False
+        if list(model.get('features') or []) != list(cls._FEATURES):
+            return False
+        mean, scale = scaler.get('mean'), scaler.get('scale')
+        return (isinstance(mean, list) and isinstance(scale, list)
+                and len(mean) == len(cls._FEATURES)
+                and len(scale) == len(cls._FEATURES))
+
+    def load_model(self, dataset_id: str) -> dict:
+        """Modelo persistido del dataset o {} (ausente/corrupto/incompatible)."""
+        try:
+            with open(self._model_path(dataset_id), 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if self._model_compatible(data):
+                return data
+        except (OSError, ValueError, TypeError):
+            pass
+        return {}
+
+    def save_model(self, dataset_id: str, cluster_info: dict) -> bool:
+        """Persiste centroides+scaler del ultimo fit y las etiquetas por sitio.
+
+        Escritura atomica (tmp + replace, como load_labels); devuelve False si
+        no hay ajuste util (p. ej. DBSCAN no expone centroides) o si falla.
+        """
+        fit = getattr(self, '_last_fit', None)
+        if not fit or not cluster_info:
+            return False
+        try:
+            machines = {
+                str(int(c)): {
+                    'name': str(info.get('name', '')),
+                    'category': str(info.get('category', '')),
+                    'color': str(info.get('color', '')),
+                }
+                for c, info in cluster_info.items()
+            }
+            payload = {
+                'version': self._MODEL_VERSION,
+                'dataset_id': str(dataset_id),
+                'saved_at': pd.Timestamp.now().isoformat(timespec='seconds'),
+                'features': list(self._FEATURES),
+                'scaler': {'mean': fit['mean'], 'scale': fit['scale']},
+                'centroids': fit['centroids'],
+                'k': len(fit['centroids']),
+                'machines': machines,
+            }
+            path = self._model_path(dataset_id)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(payload, f, ensure_ascii=False)
+            os.replace(tmp, path)
+            return True
+        except (OSError, TypeError, ValueError, KeyError):
+            return False
+
+    def cluster_appliances(self, events: pd.DataFrame,
                            n_clusters: int = 4, 
                            algorithm: str = "kmeans",
-                           custom_labels: dict = None) -> Tuple[pd.DataFrame, Dict[int, Any]]:
+                           custom_labels: dict = None,
+                           saved_model: dict = None) -> Tuple[pd.DataFrame, Dict[int, Any]]:
         """
         Applies Machine Learning clustering (K-Means, GMM, or DBSCAN)
         on multi-dimensional electrical features.
         Supports Ground-Truth manual label overrides for identified clusters.
+        MEJORA #17: con saved_model asigna por nearest-centroid usando el
+        scaler/centroides persistidos; deja el ultimo ajuste en self._last_fit.
         """
+        self._last_fit = None
         if len(events) == 0:
             events['cluster'] = []
             events['machine_name'] = []
@@ -389,8 +514,10 @@ class NILMEngine:
             return events, {}
 
         # Vector de features compartido con la seleccion automatica de K
-        # (MEJORA #6): ver _feature_frame().
-        X_scaled = self._feature_frame(events)
+        # (MEJORA #6) y con el modelo persistido (MEJORA #17).
+        X_raw = self._feature_raw(events)
+        scaler = StandardScaler().fit(X_raw)
+        X_scaled = scaler.transform(X_raw)
 
         n_samples = len(events)
         # Auto-reduce K cuando hay menos eventos que clusters pedidos
@@ -400,18 +527,37 @@ class NILMEngine:
         effective_k = max(1, min(n_clusters, n_samples))
         single_event = (n_samples == 1)
 
-        if single_event:
+        # MEJORA #17: asignacion por centroides guardados (nearest-centroid
+        # en el espacio escalado con el scaler persistido) -> el etiquetado
+        # se mantiene entre mediciones. Si algo falla, se cae al fit normal.
+        saved_ok = bool(saved_model) and self._model_compatible(saved_model)
+        model = None
+        if saved_ok:
+            try:
+                _mean = np.asarray(saved_model['scaler']['mean'], dtype=float)
+                _scale = np.asarray(saved_model['scaler']['scale'], dtype=float)
+                cents = np.asarray(saved_model['centroids'], dtype=float)
+                Z = (np.asarray(X_raw, dtype=float) - _mean) / _scale
+                dist = ((Z[:, None, :] - cents[None, :, :]) ** 2).sum(axis=2)
+                cluster_labels = dist.argmin(axis=1).astype(int)
+                self._last_fit = {'mean': _mean.tolist(),
+                                  'scale': _scale.tolist(),
+                                  'centroids': cents.tolist()}
+            except Exception:
+                saved_ok = False
+                cluster_labels = None
+        if not saved_ok and single_event:
             cluster_labels = np.zeros(n_samples, dtype=int)
-        elif algorithm.lower() == 'gmm':
+        elif not saved_ok and algorithm.lower() == 'gmm':
             model = GaussianMixture(n_components=effective_k, random_state=42, max_iter=200)
             cluster_labels = model.fit_predict(X_scaled)
-        elif algorithm.lower() == 'dbscan':
+        elif not saved_ok and algorithm.lower() == 'dbscan':
             model = DBSCAN(eps=0.75, min_samples=4)
             cluster_labels = model.fit_predict(X_scaled)
             unique_labels = sorted(list(set(cluster_labels)))
             label_map = {l: i for i, l in enumerate(unique_labels)}
             cluster_labels = np.array([label_map[l] for l in cluster_labels])
-        else: # Default KMeans
+        elif not saved_ok: # Default KMeans
             if effective_k >= n_samples:
                 # Tantos clusters como eventos: asignacion 1:1 sin KMeans
                 # (KMeans con k==n_samples da clusters triviales de 1 punto).
@@ -419,6 +565,20 @@ class NILMEngine:
             else:
                 model = KMeans(n_clusters=effective_k, random_state=42, n_init=10)
                 cluster_labels = model.fit_predict(X_scaled)
+
+        if saved_ok:
+            pass  # _last_fit ya apunta al modelo guardado (se re-persiste)
+        elif model is not None:
+            # MEJORA #17: guarda scaler + centroides del fit para la proxima
+            # medicion (KMeans: cluster_centers_; GMM: means_; DBSCAN: nada).
+            cents_fit = getattr(model, 'cluster_centers_', None)
+            if cents_fit is None:
+                cents_fit = getattr(model, 'means_', None)
+            if cents_fit is not None:
+                self._last_fit = {'mean': scaler.mean_.tolist(),
+                                  'scale': scaler.scale_.tolist(),
+                                  'centroids': np.asarray(cents_fit,
+                                                          dtype=float).tolist()}
 
         events['cluster'] = cluster_labels
 
@@ -560,10 +720,31 @@ class NILMEngine:
                     name = f"Auxiliares / Standby ({avg_p:.1f} kW)"
                     category = "Iluminación / Auxiliar"
 
+            # MEJORA #17: etiquetado consistente entre mediciones. Si los
+            # eventos se asignaron con los centroides guardados (nearest-
+            # centroid), se conserva el nombre/categoria/color del modelo del
+            # sitio. La etiqueta manual (Ground Truth) siempre tiene prioridad
+            # sobre el modelo; la heuristica solo actua si el modelo no trae
+            # ese cluster.
+            saved_color = None
+            if saved_ok and not is_custom:
+                try:
+                    _sm = (saved_model.get('machines') or {}).get(str(int(c)))
+                except (TypeError, ValueError):
+                    _sm = None
+                if isinstance(_sm, dict):
+                    if str(_sm.get('name', '')).strip():
+                        name = str(_sm['name']).strip()
+                    if str(_sm.get('category', '')).strip():
+                        category = str(_sm['category']).strip()
+                    if str(_sm.get('color', '')).strip():
+                        saved_color = str(_sm['color']).strip()
+
             cluster_info[c] = {
                 "name": name,
                 "category": category,
-                "color": colors[rank % len(colors)],
+                # MEJORA #17: el modelo guardado conserva tambien el color.
+                "color": saved_color or colors[rank % len(colors)],
                 "avg_delta_p": round(avg_p, 2),
                 "avg_delta_i": round(avg_i, 2),
                 "avg_delta_q": round(avg_q, 2),
@@ -2017,7 +2198,8 @@ class NILMEngine:
                         use_fhmm: bool = False,
                         max_states: int = 3,
                         labels: dict = None,
-                        auto_k: bool = False) -> Dict[str, Any]:
+                        auto_k: bool = False,
+                        reuse_model: bool = False) -> Dict[str, Any]:
         """
         Executes full NILM pipeline and returns structured JSON-ready results.
         """
@@ -2040,10 +2222,27 @@ class NILMEngine:
                     n_clusters = int(k_selection['k'])
             except Exception:
                 k_selection = {}
+        # MEJORA #17: reutilizar el modelo persistido del sitio (centroides,
+        # scaler y etiquetas) para etiquetado consistente entre mediciones.
+        saved_model = self.load_model(dataset_id) if reuse_model else {}
         events_clustered, cluster_info = self.cluster_appliances(
-            events, n_clusters=n_clusters, algorithm=algorithm, custom_labels=labels
+            events, n_clusters=n_clusters, algorithm=algorithm,
+            custom_labels=labels, saved_model=saved_model or None
         )
         n_clusters = len(cluster_info)
+        if reuse_model:
+            _k_saved = int(saved_model.get('k') or 0)
+            model_reuse = {
+                'requested': True,
+                'reused': bool(saved_model) and _k_saved == n_clusters,
+                'k': _k_saved,
+                'saved_at': str(saved_model.get('saved_at', '')),
+            }
+        else:
+            model_reuse = {'requested': False, 'reused': False,
+                           'k': 0, 'saved_at': ''}
+        # Persistir tras el fit para la proxima medicion (MEJORA #17).
+        self.save_model(dataset_id, cluster_info)
         n_on_total = int((events['event_type'] == 'ON').sum()) if len(events) else 0
         if n_on_total == 0:
             warning = "Sin arranques detectados con el umbral actual: baja el umbral de corriente y re-ejecuta el analisis."
@@ -2181,6 +2380,7 @@ class NILMEngine:
             "nilmtk_power_states_kw": [round(state, 2) for state in nilmtk_states],
             "n_clusters": n_clusters,
             "k_selection": k_selection,
+            "model_reuse": model_reuse,
             "total_events_detected": len(events_clustered),
             "warning": warning,
             "timestamps": timestamps_sampled,

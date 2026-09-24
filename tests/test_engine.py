@@ -776,3 +776,86 @@ def test_analyze_dataset_auto_k_exposes_selection():
     res2 = eng.analyze_dataset("synthetic", n_clusters=4, auto_k=False,
                                power_threshold=0.5, current_threshold=2.0)
     assert res2.get("k_selection") == {}
+
+
+def test_model_persistence_roundtrip_keeps_labels():
+    """MEJORA #17: guardar -> reutilizar conserva nombre, categoria y color."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        eng = NILMEngine(_FakeDM(make_df_harm()))
+        eng.dm.cache_dir = tmp
+        _, ev = eng.detect_events(eng.dm.load_dataset("sitio"), 2.0, 0.5)
+        _, info = eng.cluster_appliances(ev, n_clusters=2, algorithm="kmeans")
+        assert info and len(info) == 2
+
+        assert eng.save_model("sitio", info) is True
+        assert os.path.exists(eng._model_path("sitio"))
+        saved = eng.load_model("sitio")
+        assert saved, "el modelo guardado debe ser compatible al recargarlo"
+        assert saved["k"] == len(info)
+        assert set(saved["machines"]) == {str(int(c)) for c in info}
+        assert saved["scaler"]["mean"] and saved["scaler"]["scale"]
+        assert len(saved["centroids"]) == len(info)
+
+        # Segunda medicion del mismo sitio: asignacion por centroides
+        # guardados -> mismos nombres/categorias/colores (consistencia).
+        eng2 = NILMEngine(_FakeDM(make_df_harm()))
+        eng2.dm.cache_dir = tmp
+        _, ev2 = eng2.detect_events(eng2.dm.load_dataset("sitio"), 2.0, 0.5)
+        _, info2 = eng2.cluster_appliances(ev2, n_clusters=2, algorithm="kmeans",
+                                           saved_model=eng2.load_model("sitio"))
+        assert info2
+        for c, st in info2.items():
+            ref = saved["machines"].get(str(int(c)))
+            if ref:
+                assert st["name"] == ref["name"]
+                assert st["category"] == ref["category"]
+                assert st["color"] == ref["color"]
+
+        # La etiqueta manual (Ground Truth) mantiene prioridad sobre el modelo.
+        _, ev3 = eng2.detect_events(eng2.dm.load_dataset("sitio"), 2.0, 0.5)
+        gt = {str(int(c)): "Equipo GT" for c in info2}
+        _, info3 = eng2.cluster_appliances(ev3, n_clusters=2, algorithm="kmeans",
+                                           custom_labels=gt,
+                                           saved_model=eng2.load_model("sitio"))
+        assert info3 and all(st["name"] == "Equipo GT" for st in info3.values())
+        assert all(st["custom_label"] for st in info3.values())
+
+
+def test_reuse_model_report_and_corrupt_fallback():
+    """MEJORA #17: informe model_reuse y caida al fit si falta o se corrompe."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        eng = NILMEngine(_FakeDM(make_df_harm()))
+        eng.dm.cache_dir = tmp
+        kw = dict(n_clusters=2, use_fhmm=False, reuse_model=True,
+                  power_threshold=0.5, current_threshold=2.0)
+
+        first = eng.analyze_dataset("sitio", **kw)
+        mr1 = first["model_reuse"]
+        assert mr1["requested"] is True
+        assert mr1["reused"] is False      # primera vez: no habia modelo
+        assert first["n_clusters"] == 2
+        json.dumps(mr1, allow_nan=False)
+
+        second = eng.analyze_dataset("sitio", **kw)
+        mr2 = second["model_reuse"]
+        assert mr2["requested"] is True
+        assert mr2["reused"] is True       # modelo guardado con el mismo K
+        assert mr2["k"] == second["n_clusters"] == 2
+        assert mr2["saved_at"]             # fecha del modelo recargado
+        json.dumps(mr2, allow_nan=False)
+
+        # Modelo corrupto -> load_model {} y se reajusta sin romper.
+        with open(eng._model_path("sitio"), "w", encoding="utf-8") as fh:
+            fh.write("{no es json")
+        assert eng.load_model("sitio") == {}
+        third = eng.analyze_dataset("sitio", **kw)
+        assert third["model_reuse"]["reused"] is False
+        assert third["n_clusters"] == 2
+
+        # Sin reuse_model el informe queda desactivado (no se lee el modelo).
+        plain = eng.analyze_dataset("sitio", n_clusters=2, use_fhmm=False,
+                                    power_threshold=0.5, current_threshold=2.0)
+        assert plain["model_reuse"] == {"requested": False, "reused": False,
+                                        "k": 0, "saved_at": ""}

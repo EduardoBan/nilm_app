@@ -242,6 +242,13 @@ class AnalyzeHandler(BaseHandler):
             else:
                 auto_k = bool(auto_k_raw)
 
+            # MEJORA #17: reutilizar el modelo de clustering persistido del sitio
+            reuse_model_raw = req_data.get("reuse_model")
+            if reuse_model_raw is None:
+                reuse_model = self.get_argument("reuse_model", "false").lower() in ("1", "true", "yes", "on")
+            else:
+                reuse_model = bool(reuse_model_raw)
+
             # Manual Ground-Truth labels persisted for this dataset (or passed in request)
             labels = req_data.get("labels")
             if not labels or not isinstance(labels, dict):
@@ -256,7 +263,8 @@ class AnalyzeHandler(BaseHandler):
                 use_fhmm=use_fhmm,
                 max_states=max_states,
                 labels=labels,
-                auto_k=auto_k
+                auto_k=auto_k,
+                reuse_model=reuse_model
             )
             self.write_json({"status": "success", "data": result})
         except ValueError as e:

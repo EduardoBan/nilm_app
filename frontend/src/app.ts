@@ -326,6 +326,9 @@ class NILMApp {
     // MEJORA #6: selección automática de K (Silhouette / Davies-Bouldin).
     const autoKCheck = document.getElementById('chk-auto-k') as HTMLInputElement | null;
     const auto_k = !!(autoKCheck && autoKCheck.checked);
+    // MEJORA #17: reutilizar el modelo de clustering persistido del sitio.
+    const reuseCheck = document.getElementById('chk-reuse-model') as HTMLInputElement | null;
+    const reuse_model = !!(reuseCheck && reuseCheck.checked);
 
     this.showLoading(true);
     try {
@@ -337,7 +340,8 @@ class NILMApp {
         power_threshold: 1.0,
         use_fhmm: this.useFhmm,
         max_states: 3,
-        auto_k
+        auto_k,
+        reuse_model
       });
 
       this.updateApplianceTable();
@@ -352,6 +356,13 @@ class NILMApp {
         } else {
           autoNote.hidden = true;
         }
+      }
+      // MEJORA #17: aviso de reutilización del modelo guardado.
+      const mr = this.analysis.model_reuse;
+      if (mr && mr.requested) {
+        this.showToast(mr.reused
+          ? `Modelo reutilizado (K=${mr.k}, guardado ${mr.saved_at}) — etiquetado consistente entre mediciones`
+          : 'Sin modelo guardado compatible: se aplicó clustering normal y se guardó el nuevo', 'info');
       }
       const mode = this.analysis.fhmm_enabled ? 'FHMM multi-estado' : 'ON/OFF binario';
       const warn = (this.analysis as any).warning;

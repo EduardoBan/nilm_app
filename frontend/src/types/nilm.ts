@@ -363,6 +363,8 @@ export interface NILMAnalysisResult {
   multi_state_models?: Record<string, MultiStateModel>;
   /* MEJORA #6: seleccion automatica de K (Silhouette/Davies-Bouldin) */
   k_selection?: KSelection | null;
+  /* MEJORA #17: persistencia y reutilizacion del modelo de clustering */
+  model_reuse?: ModelReuse | null;
 }
 
 /* MEJORA #6: seleccion automatica de K */
@@ -380,6 +382,14 @@ export interface KSelection {
   method: string;
 }
 
+/* MEJORA #17: persistencia de modelos (centroides + etiquetas por sitio) */
+export interface ModelReuse {
+  requested: boolean;
+  reused: boolean;
+  k: number;
+  saved_at: string;
+}
+
 export interface AnalysisParams {
   dataset_id: string;
   n_clusters: number;
@@ -391,6 +401,8 @@ export interface AnalysisParams {
   max_states: number;
   /* MEJORA #6: selección automática de K (Silhouette/Davies-Bouldin) */
   auto_k?: boolean;
+  /* MEJORA #17: reutilizar el modelo de clustering persistido del sitio */
+  reuse_model?: boolean;
 }
 
 /* MEJORA #9/#10: benchmark de algoritmos + estabilidad de umbrales (frontend-only) */
