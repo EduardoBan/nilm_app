@@ -333,6 +333,10 @@ class NILMApp {
     const pairingSelect = document.getElementById('select-pairing') as HTMLSelectElement | null;
     const pairing_method = ((pairingSelect && pairingSelect.value) || 'auto') as
       'auto' | 'hungarian' | 'sequential';
+    // MEJORA #7: detector de cambios (umbral fijo / CUSUM / híbrido).
+    const detectionSelect = document.getElementById('select-detection') as HTMLSelectElement | null;
+    const detection_method = ((detectionSelect && detectionSelect.value) || 'threshold') as
+      'threshold' | 'cusum' | 'hybrid';
 
     this.showLoading(true);
     try {
@@ -346,7 +350,8 @@ class NILMApp {
         max_states: 3,
         auto_k,
         reuse_model,
-        pairing_method
+        pairing_method,
+        detection_method
       });
 
       this.updateApplianceTable();
@@ -382,6 +387,18 @@ class NILMApp {
         }
       }
       const mode = this.analysis.fhmm_enabled ? 'FHMM multi-estado' : 'ON/OFF binario';
+      // MEJORA #7: nota del detector de cambios (umbral / CUSUM / híbrido).
+      const cpNote = document.getElementById('detection-note');
+      const cp = this.analysis.change_points;
+      if (cpNote) {
+        if (cp && cp.events_final) {
+          const extra = cp.cusum_added ? ` · +${cp.cusum_added} CUSUM` : '';
+          cpNote.textContent = `Detección ${cp.requested}: ${cp.events_final} eventos${extra}`;
+          cpNote.hidden = false;
+        } else {
+          cpNote.hidden = true;
+        }
+      }
       const warn = (this.analysis as any).warning;
       if (warn) this.showToast(warn, 'info');
       this.showToast(`Análisis NILM completado (${this.analysis.total_events_detected} eventos · ${this.analysis.timeline_intervals.length} intervalos Gantt · modo ${mode})`, 'success');

@@ -962,3 +962,130 @@ def test_pairing_report_degenerate_and_exposed():
     assert 0.0 <= pairing["improved_pct"] <= 100.0
     assert pairing["machines_total"] == res["n_clusters"]
     json.dumps(pairing, allow_nan=False)
+
+
+def make_df_small_step(n=120, step_a=1.5):
+    """MEJORA #7: un unico escalon de `step_a` A TOTALES (bajo el umbral manual)."""
+    rng = np.random.default_rng(5)
+    t = pd.date_range("2024-01-01", periods=n, freq="1min")
+    i = np.full(n, 5.0) + rng.normal(0, 0.02, n)
+    i[60:90] += step_a
+    return pd.DataFrame({
+        "timestamp": t,
+        "I *L1 media [A]": i / 3,
+        "I *L2 media [A]": i / 3,
+        "I *L3 media [A]": i / 3,
+        "U L1 media [V]": 230.0,
+        "U L2 media [V]": 230.0,
+        "U L3 media [V]": 230.0,
+        "PF L1 media [---]": 0.9,
+        "PF L2 media [---]": 0.9,
+        "PF L3 media [---]": 0.9,
+    })
+
+
+def test_cusum_change_points_adaptive_and_robust():
+    """MEJORA #7: sigma sale del dato (MAD), localiza el escalon y filtra ruido."""
+    rng = np.random.default_rng(9)
+    sig = np.full(120, 5.0) + rng.normal(0, 0.02, 120)
+    sig[60:90] += 1.5
+    cambios, info = NILMEngine._cusum_change_points(sig)
+    assert info["samples"] == 120
+    assert info["sigma"] > 0.0
+    assert abs(info["h"] - 5.0 * info["sigma"]) < 1e-4  # h = h_sigma * sigma
+    assert abs(info["drift"] - 0.5 * info["sigma"]) < 1e-4
+    assert cambios, "debe detectar el escalon"
+    # Localiza la subida (t=60) y la bajada (t=90), sin candidatos espurios.
+    assert all(abs(r - 60) <= 1 or abs(r - 90) <= 1 for r in cambios)
+    vals = sorted(cambios.values())
+    assert vals[-1] > 1.0 and vals[0] < -1.0
+    assert abs(cambios[min(cambios, key=lambda r: abs(r - 60))] - 1.5) < 0.2
+    json.dumps(info, allow_nan=False)
+
+    # Ruido puro: el CUSUM puede cruzar, pero el filtro de salto minimo
+    # (max(0.2, 2*sigma)) descarta los cambios irrelevantes.
+    sin_cambios, info_ruido = NILMEngine._cusum_change_points(
+        rng.normal(5.0, 0.02, 200))
+    assert sin_cambios == {} and info_ruido["candidates"] == 0
+    # Senal constante (sigma=0) y serie corta: sin cambios y sin excepcion.
+    assert NILMEngine._cusum_change_points(np.full(50, 5.0))[0] == {}
+    assert NILMEngine._cusum_change_points(np.zeros(3))[0] == {}
+
+
+def test_detect_events_cusum_finds_step_below_manual_threshold():
+    """MEJORA #7: el CUSUM ve un escalon que el umbral fijo no alcanza."""
+    eng = NILMEngine(_FakeDM())
+    df = make_df_small_step()
+
+    # Umbral fijo: 1.5 A y 0.31 kW quedan por debajo de 2.0 A / 1.0 kW.
+    _, ev_thr = eng.detect_events(df.copy(), current_threshold=2.0,
+                                  power_threshold=1.0,
+                                  detection_method="threshold")
+    rep_thr = dict(eng._change_points_report)
+    assert len(ev_thr) == 0, "el escalon de 1.5 A no debe superar el umbral manual"
+    assert rep_thr["requested"] == "threshold"
+    assert rep_thr["threshold_events"] == 0
+    assert rep_thr["cusum_candidates"] == 0
+    assert rep_thr["events_final"] == 0
+
+    # CUSUM: detecta el ON y el OFF del mismo escalon sin tocar el umbral.
+    _, ev_cusum = eng.detect_events(df.copy(), current_threshold=2.0,
+                                    power_threshold=1.0,
+                                    detection_method="cusum")
+    rep_cusum = dict(eng._change_points_report)
+    assert len(ev_cusum) >= 2, "CUSUM debe ver el arranque y la parada"
+    assert set(ev_cusum["event_type"].unique()) <= {"ON", "OFF"}
+    on = ev_cusum[ev_cusum["event_type"] == "ON"]
+    off = ev_cusum[ev_cusum["event_type"] == "OFF"]
+    assert len(on) >= 1 and len(off) >= 1
+    assert (on["delta_I"] > 0).all() and float(on["delta_I"].max()) > 1.0
+    assert (off["delta_I"] < 0).all()
+    assert rep_cusum["cusum_candidates"] >= 2
+    assert rep_cusum["cusum_added"] == len(ev_cusum)
+    assert rep_cusum["sigma"] > 0.0 and rep_cusum["h"] > 0.0
+    assert rep_cusum["relaxed"] is False
+    json.dumps(rep_cusum, allow_nan=False)
+
+    # Hibrido: sin eventos de umbral que deduplicar, se comporta como CUSUM.
+    _, ev_hyb = eng.detect_events(df.copy(), current_threshold=2.0,
+                                  power_threshold=1.0,
+                                  detection_method="hybrid")
+    rep_hyb = dict(eng._change_points_report)
+    assert len(ev_hyb) >= 2 and rep_hyb["cusum_added"] >= 2
+    assert len(ev_hyb) == rep_hyb["events_final"]
+    json.dumps(rep_hyb, allow_nan=False)
+
+
+def test_hybrid_dedupes_threshold_events_and_analyze_exposes_report():
+    """MEJORA #7: el hibrido no duplica lo ya visto y analyze_dataset lo publica."""
+    eng = NILMEngine(_FakeDM(make_df_harm()))
+    df = make_df_harm()
+    _, ev_thr = eng.detect_events(df.copy(), 2.0, 0.5,
+                                  detection_method="threshold")
+    rep_thr = dict(eng._change_points_report)
+    _, ev_hyb = eng.detect_events(df.copy(), 2.0, 0.5,
+                                  detection_method="hybrid")
+    rep_hyb = dict(eng._change_points_report)
+    assert rep_thr["events_final"] == len(ev_thr)
+    assert rep_hyb["threshold_events"] == len(ev_thr)
+    assert rep_hyb["cusum_duplicated"] >= 1, "los escalones fuertes ya los ve el umbral"
+    assert len(ev_hyb) == len(ev_thr), "el hibrido no debe duplicar eventos"
+    assert rep_hyb["events_final"] == len(ev_hyb)
+
+    res = eng.analyze_dataset("synthetic", n_clusters=2, use_fhmm=False,
+                              power_threshold=0.5, current_threshold=2.0,
+                              detection_method="hybrid")
+    cp = res.get("change_points")
+    assert cp, "analyze_dataset debe publicar el informe de change-points"
+    assert cp["requested"] == "hybrid"
+    assert cp["events_final"] == res["total_events_detected"]
+    assert cp["threshold_events"] >= 1
+    assert cp["signal"] == "I_total"
+    json.dumps(cp, allow_nan=False)
+
+    # El metodo por defecto sigue siendo el historico (umbral fijo).
+    res_def = eng.analyze_dataset("synthetic", n_clusters=2, use_fhmm=False,
+                                  power_threshold=0.5, current_threshold=2.0)
+    cp_def = res_def.get("change_points")
+    assert cp_def["requested"] == "threshold"
+    assert cp_def["cusum_candidates"] == 0

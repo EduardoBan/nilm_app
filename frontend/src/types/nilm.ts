@@ -367,6 +367,8 @@ export interface NILMAnalysisResult {
   model_reuse?: ModelReuse | null;
   /* MEJORA #8: informe del pareo ON/OFF del Gantt */
   pairing?: PairingReport | null;
+  /* MEJORA #7: informe del detector de cambios */
+  change_points?: ChangePointsReport | null;
 }
 
 /* MEJORA #6: seleccion automatica de K */
@@ -406,6 +408,22 @@ export interface PairingReport {
   scipy_available: boolean;
 }
 
+/* MEJORA #7: detector de cambios (umbral fijo / CUSUM / híbrido) */
+export interface ChangePointsReport {
+  requested: 'threshold' | 'cusum' | 'hybrid' | string;
+  threshold_events: number;
+  cusum_candidates: number;
+  cusum_added: number;
+  cusum_duplicated: number;
+  events_final: number;
+  relaxed: boolean;
+  sigma: number;
+  drift: number;
+  h: number;
+  min_step: number;
+  signal: string;
+}
+
 export interface AnalysisParams {
   dataset_id: string;
   n_clusters: number;
@@ -421,6 +439,8 @@ export interface AnalysisParams {
   reuse_model?: boolean;
   /* MEJORA #8: método de pareo ON/OFF del Gantt */
   pairing_method?: 'auto' | 'hungarian' | 'sequential';
+  /* MEJORA #7: detector de cambios (umbral fijo / CUSUM / híbrido) */
+  detection_method?: 'threshold' | 'cusum' | 'hybrid';
 }
 
 /* MEJORA #9/#10: benchmark de algoritmos + estabilidad de umbrales (frontend-only) */

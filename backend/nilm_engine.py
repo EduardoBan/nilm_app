@@ -97,9 +97,94 @@ class NILMEngine:
         except Exception:
             return []
 
+    @staticmethod
+    def _cusum_change_points(values, drift_k: float = 0.5, h_sigma: float = 5.0,
+                             min_step_floor: float = 0.2, min_sep: int = 2):
+        """MEJORA #7: change-points por CUSUM con umbral ADAPTATIVO (MAD).
+
+        Detecta cambios persistentes de nivel sin depender del ajuste manual
+        de umbrales: la escala de ruido sale de los propios datos
+        (sigma = 1.4826 * MAD de las diferencias), la deriva es
+        k = drift_k*sigma y el umbral de decision h = h_sigma*sigma. La
+        posicion del cruce se refina al pico de |delta| mas cercano (el
+        cambio real) y su magnitud se estima de forma robusta con medianas
+        antes/despues; los saltos menores que max(min_step_floor, 2*sigma)
+        se descartan por ruido.
+
+        Devuelve (cambios, info): `cambios` es {posicion: salto_estimado} y
+        `info` es JSON-safe (sigma, drift, h, min_step, samples, candidates).
+        """
+        x = np.asarray(values, dtype=float)
+        info = {'samples': int(x.size), 'sigma': 0.0, 'drift': 0.0,
+                'h': 0.0, 'min_step': float(min_step_floor), 'candidates': 0}
+        n = int(x.size)
+        if n < 6:
+            return {}, info
+        x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+        d = np.diff(x)
+        mad = float(np.median(np.abs(d - np.median(d))))
+        sigma = 1.4826 * mad
+        if not np.isfinite(sigma) or sigma <= 1e-9:
+            return {}, info
+        k = float(drift_k) * sigma
+        h = float(h_sigma) * sigma
+        min_step = max(float(min_step_floor), 2.0 * sigma)
+        info.update({'sigma': round(sigma, 6), 'drift': round(k, 6),
+                     'h': round(h, 6), 'min_step': round(min_step, 6)})
+        mu = float(np.median(x))
+
+        # CUSUM de dos colas (tabular): el cambio se declara cuando el desvio
+        # acumulado supera h; despues se reinicia para detectar el siguiente.
+        cruces = []
+        s_pos = s_neg = 0.0
+        for i in range(n):
+            s_pos = max(0.0, s_pos + (x[i] - mu - k))
+            s_neg = min(0.0, s_neg + (x[i] - mu + k))
+            if s_pos > h or s_neg < -h:
+                cruces.append(i)
+                s_pos = s_neg = 0.0
+        if not cruces:
+            return {}, info
+
+        cambios = {}
+        for i in cruces:
+            lo = max(0, i - 4)
+            hi = min(n - 2, i + 2)
+            if hi < lo:
+                continue
+            row = lo + int(np.argmax(np.abs(d[lo:hi + 1]))) + 1
+            antes = x[max(0, row - 3):row]
+            despues = x[row:min(n, row + 6)]
+            if antes.size == 0 or despues.size == 0:
+                continue
+            salto = float(np.median(despues) - np.median(antes))
+            if abs(salto) < min_step:
+                continue
+            if row in cambios:
+                if abs(salto) > abs(cambios[row]):
+                    cambios[row] = salto
+            else:
+                cambios[row] = salto
+
+        # Fusiona cambios contiguos (<= min_sep muestras): conserva el mayor.
+        depurado = {}
+        for row in sorted(cambios):
+            if depurado:
+                prev = max(depurado)
+                if row - prev <= min_sep:
+                    if abs(cambios[row]) > abs(depurado[prev]):
+                        depurado.pop(prev)
+                        depurado[row] = cambios[row]
+                    continue
+            depurado[row] = cambios[row]
+        info['candidates'] = len(depurado)
+        return {int(r): round(float(s), 4) for r, s in depurado.items()}, info
+
     def detect_events(self, df: pd.DataFrame, 
                       current_threshold: float = 2.0, 
-                      power_threshold: float = 1.0) -> Tuple[pd.DataFrame, pd.DataFrame]:
+                      power_threshold: float = 1.0,
+                      detection_method: str = 'threshold'
+                      ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Detects electrical switching events (turn-on and turn-off transients)
         using multi-parameter step changes.
@@ -108,6 +193,12 @@ class NILMEngine:
         Returns (df_work, events): the working frame with computed signals
         (P_total, delta_P, delta_I, ...) and the frame of detected events,
         both with the original index preserved.
+
+        MEJORA #7: `detection_method` elige el detector de cambios:
+        'threshold' (umbrales fijos actuales), 'cusum' (solo change-points con
+        umbral adaptativo por MAD) o 'hybrid' (union de ambos: complementa el
+        umbral manual con los cambios que este no alcanza). El informe queda
+        en _change_points_report.
         """
         i_cols = [c for c in ['I *L1 media [A]', 'I *L2 media [A]', 'I *L3 media [A]'] if c in df.columns]
         v_cols = [c for c in ['U L1 media [V]', 'U L2 media [V]', 'U L3 media [V]'] if c in df.columns]
@@ -256,10 +347,47 @@ class NILMEngine:
         # Detect turn-off events (negative transitions)
         mask_off = (df_work['delta_I'] <= -current_threshold) | (df_work['delta_P'] <= -power_threshold)
 
-        events = df_work[mask_on | mask_off].copy()
-        events['event_type'] = np.where(
-            mask_on.reindex(events.index).fillna(False).values, 'ON', 'OFF'
-        )
+        # --- MEJORA #7: detector de cambios (umbral fijo / CUSUM / hibrido) ---
+        # 'threshold' = comportamiento historico; 'cusum' sustituye el umbral
+        # manual por change-points con umbral adaptativo (MAD); 'hybrid' los
+        # COMPLEMENTA: anade los cambios que el umbral fijo no alcanza, sin
+        # duplicar los ya detectados (+-1 muestra).
+        method = str(detection_method or 'threshold').strip().lower()
+        if method not in ('threshold', 'cusum', 'hybrid'):
+            method = 'threshold'
+        sel: Dict[int, str] = {}
+        for p in np.flatnonzero(mask_off.to_numpy()):
+            sel[int(p)] = 'OFF'
+        for p in np.flatnonzero(mask_on.to_numpy()):
+            sel[int(p)] = 'ON'   # ON gana si ambos disparan (igual que antes)
+        cp_info = {'requested': method, 'threshold_events': len(sel),
+                   'cusum_candidates': 0, 'cusum_added': 0,
+                   'cusum_duplicated': 0, 'events_final': len(sel),
+                   'relaxed': False, 'sigma': 0.0, 'drift': 0.0,
+                   'h': 0.0, 'min_step': 0.0, 'signal': 'I_total'}
+        if method in ('cusum', 'hybrid'):
+            cambios, cp_stats = self._cusum_change_points(
+                df_work['I_total'].to_numpy(dtype=float)
+            )
+            for _key in ('sigma', 'drift', 'h', 'min_step'):
+                cp_info[_key] = cp_stats.get(_key, 0.0)
+            cp_info['cusum_candidates'] = int(cp_stats.get('candidates', 0) or 0)
+            if method == 'cusum':
+                sel = {}
+            thr_sorted = np.array(sorted(sel.keys()), dtype=int)
+            for row, salto in sorted(cambios.items()):
+                if thr_sorted.size and bool(np.any(np.abs(thr_sorted - row) <= 1)):
+                    cp_info['cusum_duplicated'] += 1
+                    continue
+                sel[int(row)] = 'ON' if salto > 0 else 'OFF'
+                cp_info['cusum_added'] += 1
+        cp_info['events_final'] = len(sel)
+        self._change_points_report = cp_info
+
+        filas = sorted(sel.keys())
+        events = df_work.iloc[filas].copy()
+        events['event_type'] = pd.Series([sel[f] for f in filas],
+                                         index=events.index, dtype=object)
 
         # Additional features
         events['hour_of_day'] = events['timestamp'].dt.hour + events['timestamp'].dt.minute / 60.0
@@ -281,6 +409,11 @@ class NILMEngine:
                 relaxed = True
         if relaxed or len(events) == 0:
             print(f"Event detection (relaxed={relaxed}): {len(events)} events")
+        # MEJORA #7: el informe de change-points refleja el resultado final
+        # (incluye la relajacion anti-Gantt-vacio si se aplico).
+        cp_info['relaxed'] = bool(relaxed)
+        cp_info['events_final'] = int(len(events))
+        self._change_points_report = cp_info
 
         # Harmonic transient signature: harmonic-current step (ΔIh, H3..H13)
         # relative to the fundamental-current step (ΔI1 ≈ ΔI total), in %.
@@ -2319,7 +2452,8 @@ class NILMEngine:
                         labels: dict = None,
                         auto_k: bool = False,
                         reuse_model: bool = False,
-                        pairing_method: str = "auto") -> Dict[str, Any]:
+                        pairing_method: str = "auto",
+                        detection_method: str = "threshold") -> Dict[str, Any]:
         """
         Executes full NILM pipeline and returns structured JSON-ready results.
         """
@@ -2327,7 +2461,11 @@ class NILMEngine:
             labels = self.dm.get_labels(dataset_id)
 
         df = self.dm.load_dataset(dataset_id)
-        df_work, events = self.detect_events(df, current_threshold, power_threshold)
+        df_work, events = self.detect_events(df, current_threshold,
+                                            power_threshold,
+                                            detection_method=detection_method)
+        # MEJORA #7: informe del detector de cambios (umbral/CUSUM/hibrido).
+        change_points = dict(getattr(self, '_change_points_report', {}) or {})
 
         nilmtk_states = self.estimate_nilmtk_power_states(df_work)
         
@@ -2533,6 +2671,7 @@ class NILMEngine:
             "residual_anomalies": residual_anomalies,
             "cost": cost_report,
             "pairing": pairing,
+            "change_points": change_points,
             "fhmm_enabled": use_fhmm,
             "multi_state_models": {
                 str(c): {

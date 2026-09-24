@@ -104,6 +104,16 @@
         </div>
       </div>
 
+      <div class="control-group">
+        <label for="select-detection" title="MEJORA #7: detector de cambios. Umbral fijo = clásico; CUSUM = umbral adaptativo por MAD (σ estimada de los datos, h = 5σ); Híbrido = unión de ambos (detecta también los saltos que el umbral manual no alcanza)">🔍 Detección:</label>
+        <select id="select-detection" class="select-input">
+          <option value="threshold" selected>Umbral fijo (clásico)</option>
+          <option value="cusum">CUSUM (adaptativo)</option>
+          <option value="hybrid">Híbrido (umbral ∪ CUSUM)</option>
+        </select>
+        <span id="detection-note" class="k-opt-note" hidden></span>
+      </div>
+
       <button id="btn-run-analysis" class="btn-primary">
         <span>⚙️ Ejecutar Análisis NILM</span>
       </button>
@@ -627,6 +637,6 @@
   <div id="toast" class="toast"></div>
 
   <!-- Compiled TypeScript Application Bundle -->
-  <script src="dist/bundle.js?v=mejora8par-20260923"></script>
+  <script src="dist/bundle.js?v=mejora7cp-20260923"></script>
 </body>
 </html>

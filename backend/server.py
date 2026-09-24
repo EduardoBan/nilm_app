@@ -258,6 +258,15 @@ class AnalyzeHandler(BaseHandler):
             if pairing_method not in ("auto", "hungarian", "sequential"):
                 raise ValueError("pairing_method debe ser auto, hungarian o sequential")
 
+            # MEJORA #7: detector de cambios (threshold | cusum | hybrid)
+            detection_raw = req_data.get("detection_method")
+            if detection_raw is None:
+                detection_method = self.get_argument("detection_method", "threshold").strip().lower()
+            else:
+                detection_method = str(detection_raw).strip().lower()
+            if detection_method not in ("threshold", "cusum", "hybrid"):
+                raise ValueError("detection_method debe ser threshold, cusum o hybrid")
+
             # Manual Ground-Truth labels persisted for this dataset (or passed in request)
             labels = req_data.get("labels")
             if not labels or not isinstance(labels, dict):
@@ -274,7 +283,8 @@ class AnalyzeHandler(BaseHandler):
                 labels=labels,
                 auto_k=auto_k,
                 reuse_model=reuse_model,
-                pairing_method=pairing_method
+                pairing_method=pairing_method,
+                detection_method=detection_method
             )
             self.write_json({"status": "success", "data": result})
         except ValueError as e:
