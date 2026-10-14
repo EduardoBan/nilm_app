@@ -1,0 +1,25 @@
+# Dependencias del servidor NILM para Ubuntu 24.04 (Python 3.12)
+# Instaladas dentro del entorno virtual por install.sh.
+#
+# NOTA: se fijan versiones mayores compatibles con numpy 2.x / pandas 2.x.
+# nilmtk se instala desde Git (requiere 'git'); si falla, el motor degrada
+# con elegancia y la aplicacion sigue funcionando (ver backend/nilm_engine.py).
+
+# --- Nucleo de la aplicacion ---
+numpy>=1.24,<3
+pandas>=2.0,<3
+scikit-learn>=1.3
+scipy>=1.11
+openpyxl>=3.1
+tornado>=6.4
+
+# --- FHMM exacto (Viterbi) ---
+hmmlearn>=0.3.0
+
+# --- Generacion de informes PDF (scripts/generate_report.py) ---
+# matplotlib no estaba en requirements.txt original pero es necesario
+# para exportar el informe PDF con graficos.
+matplotlib>=3.7
+
+# --- NILMTK (opcional). Se instala aparte por install.sh con tolerancia a
+# fallos para no abortar la instalacion si el build desde Git falla. ---

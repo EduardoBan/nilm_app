@@ -1,0 +1,56 @@
+[Unit]
+# Servicio systemd para la Plataforma NILM Energy Analytics
+Description=NILM Energy Analytics Platform (Tornado backend + frontend)
+Documentation=https://github.com/EduardoBan/nilm_app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Usuario del sistema dedicado (lo crea install.sh). Cambiar si se usa otro.
+User=nilm
+Group=nilm
+
+# --- Rutas (coinciden con las de install.sh) ---
+WorkingDirectory=/opt/nilm
+Environment=NILM_APP_HOME=/opt/nilm
+Environment=NILM_PORT=8000
+# Fuerza backend Agg de matplotlib (sin display) para los informes PDF.
+Environment=MPLBACKEND=Agg
+# Limita hilos de librerias numericas para no saturar la CPU del servidor.
+Environment=OMP_NUM_THREADS=4
+
+# Entorno virtual creado por install.sh
+ExecStart=/opt/nilm/venv/bin/python /opt/nilm/start_server.py
+
+# El usuario de sistema no tiene HOME; se apunta a una carpeta escribible
+# (cache/) para que matplotlib y otras librerias guarden su cache sin fallar
+# en un servidor sin interfaz grafica (headless).
+Environment=HOME=/opt/nilm/cache
+Environment=MPLCONFIGDIR=/opt/nilm/cache/matplotlib
+
+# --- Reinicio automatico ante fallos ---
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# --- Endurecimiento / seguridad ---
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+# ProtectSystem=full deja el sistema de solo lectura; se autoriza escritura
+# unicamente en las carpetas que la app necesita:
+#   - Data/     : archivos de medicion subidos.
+#   - cache/    : cache de datasets y cache de fuentes de matplotlib.
+#   - reports/  : informes PDF generados.
+#   - backend/  : load_labels.json (etiquetas manuales del usuario).
+ReadWritePaths=/opt/nilm/Data /opt/nilm/cache /opt/nilm/reports /opt/nilm/backend
+
+# --- Logs (journalctl -u nilm) ---
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nilm
+
+[Install]
+WantedBy=multi-user.target
