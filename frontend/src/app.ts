@@ -503,7 +503,7 @@ class NILMApp {
         <td>${m.event_count} arranques</td>
         <td>${m.active_minutes.toFixed(0)} min</td>
         <td><strong>${m.energy_kwh.toFixed(2)} kWh</strong></td>
-        <td><strong>${m.cost_eur != null ? m.cost_eur.toFixed(2) + ' €' : '--'}</strong>${m.cost_month_eur != null ? `<br><small title="Proyección mensual">${m.cost_month_eur.toFixed(2)} €/mes</small>` : ''}</td>
+        <td><strong>${m.cost_eur != null ? m.cost_eur.toFixed(2) + ' $' : '--'}</strong>${m.cost_month_eur != null ? `<br><small title="Proyección mensual">${m.cost_month_eur.toFixed(2)} $/mes</small>` : ''}</td>
         <td>
           <div class="progress-bar-wrap">
             <div class="progress-bar-fill" style="width:${Math.min(100, m.energy_share_pct)}%; background:${m.color}"></div>
@@ -775,7 +775,7 @@ class NILMApp {
           </div>
           <div class="mc-stat">
             <span class="mc-stat-label">Coste (tarifa)</span>
-            <span class="mc-stat-val">${m.cost_eur != null ? m.cost_eur.toFixed(2) + ' €' : '--'}${m.cost_month_eur != null ? ` (${m.cost_month_eur.toFixed(2)} €/mes)` : ''}</span>
+            <span class="mc-stat-val">${m.cost_eur != null ? m.cost_eur.toFixed(2) + ' $' : '--'}${m.cost_month_eur != null ? ` (${m.cost_month_eur.toFixed(2)} $/mes)` : ''}</span>
           </div>
         </div>
         ${this.renderMachineStatesBlock(m)}
@@ -813,31 +813,31 @@ class NILMApp {
     const periodChips = (c.periods || []).map(p => `
       <div class="mc-stat">
         <span class="mc-stat-label">Periodo ${escapeHtml(p.period)}</span>
-        <span class="mc-stat-val">${p.cost_eur.toFixed(2)} € <small>(${p.hours.toFixed(1)} h)</small></span>
+        <span class="mc-stat-val">${p.cost_eur.toFixed(2)} $ <small>(${p.hours.toFixed(1)} h)</small></span>
       </div>`).join('');
     const shiftChips = (c.shifts || []).map(s => `
       <div class="mc-stat">
         <span class="mc-stat-label">Turno ${escapeHtml(s.shift)}</span>
-        <span class="mc-stat-val">${s.cost_eur.toFixed(2)} € <small>(${s.hours.toFixed(1)} h)</small></span>
+        <span class="mc-stat-val">${s.cost_eur.toFixed(2)} $ <small>(${s.hours.toFixed(1)} h)</small></span>
       </div>`).join('');
     el.innerHTML = `
       <div class="mc-grid">
         <div class="mc-stat">
           <span class="mc-stat-label">💶 Coste total · ${escapeHtml(c.tariff?.name || 'tarifa')}</span>
-          <span class="mc-stat-val">${c.total.cost_eur.toFixed(2)} €</span>
+          <span class="mc-stat-val">${c.total.cost_eur.toFixed(2)} $</span>
         </div>
         <div class="mc-stat">
           <span class="mc-stat-label">Proyección mensual</span>
-          <span class="mc-stat-val">${c.total.cost_month_eur.toFixed(2)} €/mes</span>
+          <span class="mc-stat-val">${c.total.cost_month_eur.toFixed(2)} $/mes</span>
         </div>
         <div class="mc-stat">
           <span class="mc-stat-label">Residuo / standby</span>
-          <span class="mc-stat-val">${c.residual ? c.residual.cost_eur.toFixed(2) + ' €' : '--'}</span>
+          <span class="mc-stat-val">${c.residual ? c.residual.cost_eur.toFixed(2) + ' $' : '--'}</span>
         </div>
         ${periodChips}
         ${shiftChips}
       </div>
-      <p class="cost-tariff-note">Tarifa (${rateLbl} €/kWh) · Cobertura ${c.hours_covered.toFixed(1)} h</p>
+      <p class="cost-tariff-note">Tarifa (${rateLbl} $/kWh) · Cobertura ${c.hours_covered.toFixed(1)} h</p>
     `;
   }
 
