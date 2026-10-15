@@ -1591,3 +1591,90 @@ body {
   position: relative;
 }
 
+/* ==========================================================================
+   Pestaña Línea de Tiempo - Caja metodológica (cómo se obtienen los gráficos)
+   ========================================================================== */
+.methodology-card {
+  margin-top: 20px;
+}
+
+.methodology-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.method-heading {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text-main);
+  margin-bottom: 8px;
+}
+
+.method-steps {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.method-steps li {
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.method-steps li::marker {
+  color: var(--accent-blue);
+  font-weight: 700;
+}
+
+.method-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.method-chart {
+  background: var(--bg-card-sub);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+}
+
+.method-chart h3 {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text-main);
+  margin-bottom: 8px;
+}
+
+.method-chart p,
+.method-block p {
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.method-chart p + p,
+.method-block p + p {
+  margin-top: 6px;
+}
+
+.meth-on {
+  color: #10B981;
+  font-weight: 700;
+}
+
+.meth-off {
+  color: #EF4444;
+  font-weight: 700;
+}
+
+@media (max-width: 900px) {
+  .method-grid {
+    grid-template-columns: 1fr;
+  }
+}
+

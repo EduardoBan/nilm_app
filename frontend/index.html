@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>NILM Energy Analytics - Desagregación y Monitoreo de Cargas Eléctricas</title>
-  <link rel="stylesheet" href="css/styles.css?v=fixyaxis-20260911">
+  <link rel="stylesheet" href="css/styles.css?v=methodology-20261015">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -173,7 +173,7 @@
     <nav class="nav-tabs-container">
       <button class="nav-tab active" data-tab="overview">📈 Curvas y Desagregación</button>
       <button class="nav-tab" data-tab="machines">🏭 Equipos Detectados</button>
-      <button class="nav-tab" data-tab="timeline">â € ¢️ Timeline</button>
+      <button class="nav-tab" data-tab="timeline">⏱️ Línea de Tiempo</button>
       <button class="nav-tab" data-tab="features3d">🧊 Nube 3D de Actividad</button>
       <button class="nav-tab" data-tab="features2d">🔬 Espacios de Características</button>
       <button class="nav-tab" data-tab="hourly">📊 Distribución Horaria 24h</button>
@@ -254,6 +254,53 @@
           </table>
         </div>
       </div>
+      <!-- 📖 Metodología: cómo se obtienen las curvas de esta pestaña -->
+      <div class="card methodology-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">📖 ¿Cómo se obtienen estas curvas?</h2>
+            <p class="card-subtitle">Desagregación NILM no intrusiva: de la curva total del medidor general a la curva de cada equipo</p>
+          </div>
+        </div>
+        <div class="methodology-body">
+          <div class="method-block">
+            <h3 class="method-heading">🧭 Pipeline de análisis — 5 pasos del medidor a la curva</h3>
+            <ol class="method-steps">
+              <li><strong>Potencia total medida.</strong> De cada muestra del tablero se calcula P_total = V·I·cos φ / 1000 (kW), más S_total y Q_total. Esa es la curva negra de referencia: todo lo demás debe explicarla.</li>
+              <li><strong>Eventos y equipos.</strong> Se detectan los saltos ON/OFF (umbral / CUSUM / híbrido) y el clustering ML (K-Means, GMM o DBSCAN) agrupa los saltos parecidos: un cluster = un equipo, con su potencia nominal (|ΔP| medio).</li>
+              <li><strong>Emparejamiento ON↔OFF.</strong> Cada encendido se empareja con su apagado: método <em>secuencial</em> (primer OFF compatible) o <em>húngaro</em> (asignación óptima con coste = 0,7·desvío de magnitud + 0,3·lejanía temporal, ventana de magnitud [0,5 – 2,5]× nominal y techo en el siguiente ON). El modo <em>auto</em> se queda con el de menor coste, nunca peor que el clásico.</li>
+              <li><strong>Reconstrucción de curvas.</strong> Entre cada ON y su OFF emparejado se “enciende” la curva del equipo a su potencia nominal (o a su nivel FHMM si 🧠 está activo); fuera de esos intervalos vale 0. La suma de equipos + carga base debe reproducir la curva medida.</li>
+              <li><strong>Carga base (standby).</strong> El nivel base sale del percentil 5 de P_total y la curva de fondo (baseline) es el residuo P_total − Σ equipos: lo que consume la planta cuando todo lo identificado está apagado.</li>
+            </ol>
+          </div>
+          <div class="method-grid">
+            <div class="method-chart">
+              <h3>🤖 Técnicas usadas y qué hace cada una</h3>
+              <p><strong>Pareo secuencial vs húngaro:</strong> el secuencial es rápido y cronológico (primer OFF de magnitud compatible); el húngaro resuelve la asignación óptima global ON↔OFF por equipo con la matriz de costes magnitud + tiempo (scipy), aguantando solapamientos de varios equipos a la vez.</p>
+              <p><strong>Desagregación por intervalos (Gantt):</strong> convierte pares ON↔OFF en bloques de potencia constante y estabiliza duraciones (ON mínimo, pausas cortas unidas); si el equipo ya venía encendido a t=0, se reconstruye desde el inicio hasta su primer OFF compatible.</p>
+              <p><strong>FHMM multi-estado + Viterbi:</strong> con 🧠 activo, cada equipo puede tener varios niveles en kW (estimados por K-Means sobre |ΔP| con silueta) y Viterbi elige la secuencia de estados más probable; la curva deja de ser todo/nada y muestra escalones parciales.</p>
+            </div>
+            <div class="method-chart">
+              <h3>📊 Qué muestra cada gráfico y cómo leerlo</h3>
+              <p><strong>Desagregación de Potencia:</strong> curva de referencia = total medido; curvas de colores = cada equipo reconstruido. Donde la suma de colores se separa del total hay residuo sin atribuir (fondo/standby o solapes).</p>
+              <p><strong>Reparto Energético (%):</strong> dona con la energía integrada de cada curva (kWh) y su cuota %; incluye el sector de carga base (Standby). Pasa el cursor para ver kWh y % exactos.</p>
+              <p><strong>Tabla Resumen:</strong> agrega por equipo lo mismo que dibujan las curvas: nominal kW, ΔI, inrush, THD, kVA, cos φ, fases, arranques, minutos, kWh, coste $ y %; todo sale de sus intervalos ON↔OFF, por eso cuadra con los gráficos.</p>
+            </div>
+          </div>
+          <div class="method-block">
+            <h3 class="method-heading">💡 Casos de uso — qué decisiones permite cada elemento</h3>
+            <ul class="method-steps">
+              <li><strong>Picos y simultaneidad:</strong> ver qué equipos se solapan en cada pico para escalonar arranques y bajar la demanda máxima contratada.</li>
+              <li><strong>Reparto de kWh y costes:</strong> la dona + el coste por tarifa (valle/llano/punta) permiten imputar $ por equipo, periodo y turno, y priorizar ahorros donde más pesan.</li>
+              <li><strong>Fondo permanente:</strong> la carga base y su curva cuantifican el consumo fantasma: si es alta de noche (00:00–05:00), hay equipos que no se apagan.</li>
+              <li><strong>Calidad de red:</strong> THD, kVA de distorsión y desbalance de la tabla señalan variadores y fases sobrecargadas: filtros, reparto de fases y dimensionado de trafo/cables.</li>
+              <li><strong>Ciclado anómalo:</strong> muchos arranques con pocos minutos = control defectuoso o termostato; conviene revisar consignas y mantenimiento.</li>
+              <li><strong>Validación cruzada:</strong> contrasta estas curvas con Línea de Tiempo (intervalos), Validación (error de reconstrucción y F1 ON/OFF) y Fugas/Standby (residuo nocturno y proyección anual).</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
     </section>
 
     <!-- Tab 2: Machine Cards -->
@@ -269,6 +316,65 @@
         <div id="cost-summary" class="cost-summary" style="display:none;"></div>
         <div id="machines-cards-container" class="machines-grid"></div>
       </div>
+      <!-- 📖 Metodología: cómo se identifican los equipos de esta pestaña -->
+      <div class="card methodology-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">📖 ¿Cómo se identifican estos equipos?</h2>
+            <p class="card-subtitle">Análisis NILM no intrusivo (sin sensores por equipo): de los saltos del medidor general a cada ficha técnica</p>
+          </div>
+        </div>
+        <div class="methodology-body">
+          <div class="method-block">
+            <h3 class="method-heading">🧭 Pipeline de análisis — 5 pasos del salto a la ficha</h3>
+            <ol class="method-steps">
+              <li><strong>Detección de eventos.</strong> Cada arranque/parada es un salto de corriente o potencia: ΔI ≥ umbral de corriente o ΔP ≥ umbral de potencia (método <em>umbral</em>), change-points CUSUM con umbral adaptativo por MAD (<em>CUSUM</em>), o la unión de ambos (<em>híbrido</em>).</li>
+              <li><strong>Vector de firma (10 features).</strong> Cada salto se describe con |ΔP|, |ΔI|, THD medio, |ΔQ|, saltos armónicos ΔH3/ΔH5/ΔH7, Δcos φ, amortiguamiento del arranque (inrush) y concentración de fase; todo se estandariza (StandardScaler).</li>
+              <li><strong>Clustering ML → un cluster = un equipo.</strong> K-Means (por defecto, semilla 42), GMM o DBSCAN agrupan los saltos parecidos. Con ⚡Auto-K se barre k = 2…8 y se elige el de mayor Silhouette (desempate: menor Davies-Bouldin). El modelo se guarda por sitio para un etiquetado consistente.</li>
+              <li><strong>Clasificación y nombrado.</strong> Reglas eléctricas asignan la familia de carga y una heurística propone el nombre (p. ej. “Motor DOL / Compresor”). Tu etiqueta manual con ✏️ (marca GT) siempre tiene prioridad.</li>
+              <li><strong>Desagregación y ficha.</strong> Se emparejan los ON↔OFF de cada cluster (asignación óptima húngara o secuencial), se estabilizan los intervalos y, con 🧠 FHMM, Viterbi añade estados intermedios. De ahí salen arranques, minutos, kWh, % y coste.</li>
+            </ol>
+          </div>
+          <div class="method-grid">
+            <div class="method-chart">
+              <h3>🤖 Técnicas usadas y qué hace cada una</h3>
+              <p><strong>K-Means / GMM / DBSCAN:</strong> agrupan saltos de firma parecida. K-Means separa por distancia al centroide (rápido y estable); GMM admite grupos elípticos con solape; DBSCAN encuentra densidades arbitrarias y aísla eventos raros como ruido.</p>
+              <p><strong>Auto-K (Silhouette + Davies-Bouldin):</strong> propone solo el número de equipos: Silhouette mide lo compacto y separado de cada grupo (mayor = mejor) y Davies-Bouldin rompe empates eligiendo grupos más compactos.</p>
+              <p><strong>Reglas de familia de carga:</strong> THD ≥ 35 % o ratio ΔH/ΔI ≥ 35 % → Electrónica de Potencia (VFD/Rectificador); inrush ≥ ×2 con I ≥ 5 A → Motor DOL; inrush ≈ ×1 con cos φ ≥ 0,95 → Resistiva; I ≥ 20 A y P ≥ 15 kW → Motor principal.</p>
+              <p><strong>FHMM multi-estado + Viterbi:</strong> un K-Means sobre |ΔP| con silueta estima los niveles en kW (parcial / plena carga) y Viterbi decide la secuencia de estados más probable en el tiempo (bloque 🧠 de la ficha).</p>
+            </div>
+            <div class="method-chart">
+              <h3>🔌 Firma eléctrica de cada ficha — qué significa</h3>
+              <p><strong>Potencia Nominal (kW) y Salto de Corriente (A):</strong> tamaño medio del salto |ΔP| / |ΔI| del cluster: cuánto “pesa” el equipo cada vez que conmuta.</p>
+              <p><strong>THD, kVA de distorsión y % D/S:</strong> cuánto ensucia la red. D se calcula según IEEE 1459 (D = V · I·THD/√(1+THD²)); el % D/S dice qué fracción de su potencia aparente es distorsión “fantasma” que calienta trafo y cables sin producir kW.</p>
+              <p><strong>Inrush × y cos φ:</strong> sobreoscilación del arranque (pico/régimen; ×2 o más = arranque directo de motor) y factor de potencia medio (|cos φ| bajo = mucha reactiva, candidato a compensación).</p>
+              <p><strong>Tipo de fase y desbalance %:</strong> reparte el salto entre L1/L2/L3: ≥ 80 % en una fase = monofásico, ≥ 55 % = asimétrico (2 fases), resto = trifásico equilibrado; 0 % = equilibrado → 100 % = todo en una fase.</p>
+            </div>
+          </div>
+          <div class="method-block">
+            <h3 class="method-heading">🧾 Qué significa cada dato de operación y coste</h3>
+            <ul class="method-steps">
+              <li><strong>Total Arranques:</strong> nº de eventos ON asignados al equipo; sirve para detectar ciclado excesivo y desgaste.</li>
+              <li><strong>Tiempo de Operación (min):</strong> suma de sus intervalos ON emparejados y estabilizados.</li>
+              <li><strong>Consumo Total (kWh + %):</strong> energía integrada de su curva desagregada y su cuota sobre el total medido.</li>
+              <li><strong>Coste ($) y $/mes:</strong> cada muestra se valora a P·Δt·tarifa de su hora (valle / llano / punta, fin de semana en valle) y se proyecta a mes (×730 h / horas cubiertas); incluye desglose por periodo, turno y residuo/standby.</li>
+              <li><strong>Estado y categoría:</strong> etiqueta propuesta por la heurística (tamaño + firma armónica) o tu nombre GT con ✏️; el color ordena de mayor a menor potencia.</li>
+            </ul>
+          </div>
+          <div class="method-block">
+            <h3 class="method-heading">💡 Casos de uso — para qué sirve cada familia detectada</h3>
+            <ul class="method-steps">
+              <li><strong>Motores DOL / compresores:</strong> priorizar el mayor kWh, revisar picos de arranque (×) y programar arranques escalonados o arrancadores suaves.</li>
+              <li><strong>Variadores / electrónica (THD alto):</strong> sospechosos de armónicos: verificar filtros, dimensionar trafo/cables por el kVA de distorsión y vigilar la calidad de red.</li>
+              <li><strong>Cargas resistivas (cos φ ≈ 1):</strong> calentadores y hornos: desplazar su uso a horas valle y estimar el ahorro por cambio de turno.</li>
+              <li><strong>Desequilibrios de fase:</strong> repartir cargas monofásicas entre fases para bajar pérdidas y disparos.</li>
+              <li><strong>Ciclado y standby:</strong> muchos arranques cortos = fallo de control o termostato; el residuo nocturno (00:00–05:00) cuantifica el consumo fantasma a eliminar.</li>
+              <li><strong>Imputación de costes:</strong> asignar $ por equipo, periodo y turno para facturación interna y presupuestos de ahorro.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
     </section>
 
     <!-- Tab 3: Operational Timeline (Líneas de Nivel) -->
@@ -293,6 +399,45 @@
         </div>
         <div id="state-timeline-container"></div>
       </div>
+
+      <!-- 📖 Metodología: cómo se obtienen los gráficos de esta pestaña -->
+      <div class="card methodology-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">📖 ¿Cómo se llegan a estos gráficos?</h2>
+            <p class="card-subtitle">Análisis NILM no intrusivo (sin sensores por equipo): del registro de un solo medidor a los dos diagramas de esta pestaña</p>
+          </div>
+        </div>
+        <div class="methodology-body">
+          <div class="method-block">
+            <h3 class="method-heading">🧭 Pipeline de análisis — 6 pasos del dato a la gráfica</h3>
+            <ol class="method-steps">
+              <li><strong>Medición única.</strong> Solo se usa el registro del tablero general (V, I, P). Se calculan los incrementos muestra a muestra ΔP y ΔI y el THD de corriente.</li>
+              <li><strong>Detección de eventos (saltos ON/OFF).</strong> Cada arranque y parada es un salto: ΔI ≥ umbral de corriente o ΔP ≥ umbral de potencia (método <em>umbral</em>), change-points CUSUM con umbral adaptativo por MAD (<em>CUSUM</em>), o la unión de ambos (<em>híbrido</em>).</li>
+              <li><strong>Caracterización.</strong> Cada salto se convierte en un vector de features (|ΔP|, |ΔI|, THD, |ΔQ|, …) y se estandariza (StandardScaler).</li>
+              <li><strong>Clustering ML.</strong> K-Means (semilla 42), GMM o DBSCAN agrupan los saltos: un cluster = un equipo detectado. Con ⚡Auto-K, Silhouette + Davies-Bouldin proponen el K óptimo. Por cada cluster se estima su potencia nominal.</li>
+              <li><strong>Emparejamiento ON↔OFF + priors de duración.</strong> Se emparejan los encendidos y paradas de cada cluster y se estabilizan los intervalos (ON mínimo, pausas cortas unidas) → lista de intervalos de operación. Con 🧠 FHMM activo, Viterbi añade estados intermedios (apagado / marcha parcial / carga plena) a cada intervalo.</li>
+              <li><strong>Render.</strong> Esos intervalos (inicio, fin, equipo, estado) son la única fuente de datos de los dos gráficos de arriba.</li>
+            </ol>
+          </div>
+          <div class="method-grid">
+            <div class="method-chart">
+              <h3>📈 Gráfico 1 · Tiempo de Operación — Líneas de Nivel</h3>
+              <p><strong>Qué muestra:</strong> una fila por equipo con su color; cada trazo horizontal va del instante de encendido al de apagado sobre la escala 00:00–24:00.</p>
+              <p><strong>Cómo leerlo:</strong> la longitud del trazo es el tiempo de uso y los huecos son paradas. Sirve para ver de un vistazo turnos, solapamientos y qué equipos están activos a cada hora del día.</p>
+            </div>
+            <div class="method-chart">
+              <h3>🔀 Gráfico 2 · Diagrama Escalonado ON/OFF</h3>
+              <p><strong>Qué muestra:</strong> la misma base de intervalos dibujada como escalera por equipo: nivel alto = encendido (ON) y nivel bajo = apagado (OFF). La flecha <span class="meth-on">↑ verde</span> marca el instante del salto ON detectado en el paso 2 y la <span class="meth-off">↓ roja</span> el del salto OFF; con FHMM aparecen además escalones intermedios de estado.</p>
+              <p><strong>Interacción:</strong> rueda del ratón = zoom en el tiempo · arrastrar = desplazar · doble clic o botón <em>↺ Vista completa</em> = volver a 00:00–24:00.</p>
+            </div>
+          </div>
+          <div class="method-block">
+            <h3 class="method-heading">💡 Cómo usar este análisis</h3>
+            <p>Cruza estos diagramas con la pestaña <strong>Reparto Energético</strong> (qué equipo explica cada kWh), <strong>Validación</strong> (fiabilidad de la desagregación frente a la curva medida) y <strong>Fugas / Standby</strong> (consumo base cuando todo está OFF). Los N.º de arranques, el tiempo de uso y la energía (kWh) de la tabla de equipos se calculan exactamente a partir de estos mismos intervalos, por lo que siempre coinciden con estos gráficos.</p>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- Tab 4: 3D Activity Cloud -->
@@ -311,6 +456,55 @@
         </div>
         <div class="chart-container" style="height: 880px;">
           <canvas id="chart-activity-3d"></canvas>
+        </div>
+      </div>
+      <!-- 📖 Metodología: qué muestra la nube 3D de actividad -->
+      <div class="card methodology-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">📖 ¿Qué muestra esta nube 3D?</h2>
+            <p class="card-subtitle">Visualización exploratoria del espacio I–V–t: cada punto es un evento ON/OFF detectado en el medidor general</p>
+          </div>
+        </div>
+        <div class="methodology-body">
+          <div class="method-block">
+            <h3 class="method-heading">🧭 Cómo se construye — del salto al punto 3D</h3>
+            <ol class="method-steps">
+              <li><strong>Cada punto es un evento.</strong> Los mismos saltos ON/OFF de la detección (umbral / CUSUM / híbrido) se dibujan aquí: hasta 600 eventos (muestreo aleatorio con semilla 42 si hay más).</li>
+              <li><strong>Ejes del cubo.</strong> X = corriente total I en el instante del salto [A] · Y = tensión media V [V] · Z = hora del día en minutos (0–1440, vertical). El color es el cluster = equipo asignado por el clustering.</li>
+              <li><strong>Proyección pseudo-3D.</strong> Las coordenadas se normalizan al cubo (0–1), se rotan en yaw y se dibujan con escala por profundidad (lo lejano se ve más pequeño). El eje Y se auto-ajusta al min/max medido ±20 % para que la variación real de tensión llene el cubo.</li>
+              <li><strong>Misma base que el resto.</strong> Colores, nombres y clusters son idénticos a los de Equipos, Curvas y Espacios 2D: si aquí dos colores se mezclan, esa confusión existe también en el clustering.</li>
+            </ol>
+          </div>
+          <div class="method-grid">
+            <div class="method-chart">
+              <h3>🤖 Técnicas usadas</h3>
+              <p><strong>Espacio de características visual (I–V–t):</strong> proyecta los eventos a 3 dimensiones interpretables en vez de las 10 del clustering: la magnitud (I) separa por potencia y el tiempo revela los turnos.</p>
+              <p><strong>Render por proyección con yaw:</strong> rotación horizontal arrastrable + vistas fijas XY / YZ / ZX, puntos con tamaño según profundidad, tooltip al pasar el ratón (equipo, I, V, hora) y leyenda para mostrar/ocultar clusters.</p>
+              <p><strong>Muestreo reproducible:</strong> si hay más de 600 eventos se dibuja una muestra aleatoria (semilla 42): la nube es representativa y siempre la misma para el mismo análisis.</p>
+            </div>
+            <div class="method-chart">
+              <h3>📐 Fundamentos teóricos</h3>
+              <p><strong>Hipótesis NILM:</strong> cada equipo deja una firma eléctrica repetible; sus arranques forman una nube compacta y separada en el espacio de características, y eso es lo que el clustering etiqueta con un color.</p>
+              <p><strong>Proximidad = similitud:</strong> puntos cercanos comparten magnitud (I) y condición de red (V); el color confirma si el clustering en 10 dimensiones coincide con lo que se ve a ojo en estas 3 interpretables.</p>
+              <p><strong>Eje temporal vertical:</strong> apila las repeticiones del día: una columna vertical de un color = un equipo que arranca muchas veces; su altura dice a qué hora (turnos).</p>
+              <p><strong>Eje de tensión:</strong> en una red sana V apenas varía, así que la nube es “plana” en Y; si V cae cuando I sube, hay impedancia de red o un arranque pesado (pista de DOL).</p>
+            </div>
+          </div>
+          <div class="method-block">
+            <h3 class="method-heading">👁️ Cómo leerla e interactuar</h3>
+            <p>Un color compacto y separado = cluster fiable; dos colores mezclados = posible confusión (revisa K, algoritmo o umbrales). Las capas horizontales son turnos/horas pico, las columnas verticales equipos cíclicos y los puntos sueltos eventos raros o ruido. Arrastra para rotar (yaw), usa <em>XY / YZ / ZX</em> para las vistas I–V, V–t e I–t, oculta equipos desde la leyenda y pasa el ratón sobre un punto para ver equipo, corriente, tensión y hora.</p>
+          </div>
+          <div class="method-block">
+            <h3 class="method-heading">💡 Casos de uso</h3>
+            <ul class="method-steps">
+              <li><strong>Validar el clustering</strong> de un vistazo antes de confiar en kWh y costes: lo que aquí se mezcla, en las fichas también.</li>
+              <li><strong>Detectar solapes</strong> (dos equipos con la misma I): justifica pasar a los Espacios 2D (ΔP–ΔQ, ΔI–THD) que sí los separan.</li>
+              <li><strong>Leer turnos y hábitos:</strong> capas de mañana/tarde/noche, arranques fuera de horario y solapamientos de equipos.</li>
+              <li><strong>Cazar anomalías:</strong> un punto lejos de su nube = arranque anómalo, carga nueva no catalogada o falso evento.</li>
+              <li><strong>Explicar NILM sin fórmulas:</strong> cada color es un equipo descubierto solo con el medidor general.</li>
+            </ul>
+          </div>
         </div>
       </div>
     </section>
