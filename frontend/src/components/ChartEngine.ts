@@ -1104,6 +1104,8 @@ export class ChartEngine {
    * Renders a stepped ON/OFF state diagram (one row per machine) with arrow
    * markers: green up-arrow on OFF->ON transitions, red down-arrow on ON->OFF
    * transitions. Uses SVG with 1:1 coordinates so arrows never distort.
+   * The time (X) axis is zoomable/pannable: wheel = zoom, drag = pan,
+   * double-click or the Reset button restores the full 24 h view.
    */
   static renderStateStepTimeline(
     container: HTMLElement,
@@ -1126,6 +1128,7 @@ export class ChartEngine {
     const PAD_BOTTOM = 8;
     const OFF_Y = 0.72;
     const ON_Y = 0.2;
+    const MIN_SPAN = 60; // zoom máximo: 1 minuto
 
     const parseSec = (t: string): number => {
       const p = String(t || '0:0:0').split(':').map(Number);
@@ -1136,6 +1139,13 @@ export class ChartEngine {
       const h = Math.floor(sec / 3600) % 24;
       const m = Math.floor((sec % 3600) / 60);
       return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+    };
+    const fmtTimeSec = (sec: number): string => {
+      sec = Math.max(0, Math.round(sec));
+      const h = Math.floor(sec / 3600) % 24;
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
     };
 
     const buildBlocks = (machineId: number) => {
@@ -1158,6 +1168,32 @@ export class ChartEngine {
         }
       });
       return blocks;
+    };
+
+    // Paso de tick adaptativo (~8 divisiones visibles), en segundos.
+    const pickStep = (span: number): number => {
+      const target = span / 8;
+      const steps = [60, 300, 900, 1800, 3600, 7200, 10800, 21600, 43200];
+      for (const st of steps) if (st >= target) return st;
+      return 43200;
+    };
+
+    // Ventana visible del zoom/pan sobre el día completo, en segundos.
+    let winStart = 0;
+    let winEnd = DAY;
+    const clampWin = () => {
+      const span = Math.min(Math.max(winEnd - winStart, MIN_SPAN), DAY);
+      let a = winStart;
+      if (a < 0) a = 0;
+      if (a + span > DAY) a = DAY - span;
+      // Snap to exact full-view bounds within 0.5s (matches the reset-button
+      // threshold): avoids float drift that would drop the 00:00 tick or
+      // misalign the full-view grid positions.
+      if (a < 0.5) a = 0;
+      let b = a + span;
+      if (b > DAY - 0.5) b = DAY;
+      winStart = a;
+      winEnd = b;
     };
 
     const tip = document.createElement('div');
@@ -1190,8 +1226,8 @@ export class ChartEngine {
       return poly;
     };
 
-    const width = Math.max(container.clientWidth || 900, 480);
-    const plotW = Math.max(50, width - PAD_LEFT - PAD_RIGHT);
+    let width = Math.max(container.clientWidth || 900, 480);
+    let plotW = Math.max(50, width - PAD_LEFT - PAD_RIGHT);
     const height = PAD_TOP + PAD_BOTTOM + machines.length * ROW_H;
 
     const svg = document.createElementNS(svgNS, 'svg');
@@ -1201,99 +1237,202 @@ export class ChartEngine {
     svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
     svg.setAttribute('role', 'img');
     svg.setAttribute('aria-label', 'Diagrama escalonado de estado ON/OFF por equipo');
+    svg.style.touchAction = 'none'; // deja capturar el arrastre en táctil
 
-    const xOf = (sec: number) => PAD_LEFT + (sec / DAY) * plotW;
+    const xOf = (sec: number): number =>
+      PAD_LEFT + ((sec - winStart) / (winEnd - winStart)) * plotW;
+    const timeAtX = (px: number): number =>
+      winStart + ((px - PAD_LEFT) / plotW) * (winEnd - winStart);
 
-    for (let h = 0; h <= 24; h += 3) {
-      const x = xOf(h * 3600);
-      const grid = document.createElementNS(svgNS, 'line');
-      grid.setAttribute('class', 'state-step-gridline');
-      grid.setAttribute('x1', String(x));
-      grid.setAttribute('x2', String(x));
-      grid.setAttribute('y1', String(PAD_TOP - 6));
-      grid.setAttribute('y2', String(height - PAD_BOTTOM));
-      svg.appendChild(grid);
+    const draw = () => {
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
 
-      const lbl = document.createElementNS(svgNS, 'text');
-      lbl.setAttribute('class', 'state-step-axis-label');
-      lbl.setAttribute('x', String(x));
-      lbl.setAttribute('y', String(PAD_TOP - 12));
-      lbl.setAttribute(
-        'text-anchor',
-        h === 0 ? 'start' : h === 24 ? 'end' : 'middle',
-      );
-      lbl.textContent = `${h.toString().padStart(2, '0')}:00`;
-      svg.appendChild(lbl);
-    }
+      const step = pickStep(winEnd - winStart);
+      const fmtTick = step < 60 ? fmtTimeSec : fmtTime;
+      const firstTick = Math.ceil(winStart / step) * step;
+      for (let ts = firstTick; ts <= winEnd + 1e-6; ts += step) {
+        const x = xOf(ts);
+        const grid = document.createElementNS(svgNS, 'line');
+        grid.setAttribute('class', 'state-step-gridline');
+        grid.setAttribute('x1', String(x));
+        grid.setAttribute('x2', String(x));
+        grid.setAttribute('y1', String(PAD_TOP - 6));
+        grid.setAttribute('y2', String(height - PAD_BOTTOM));
+        svg.appendChild(grid);
 
-    machines.forEach((m, i) => {
-      const rowTop = PAD_TOP + i * ROW_H;
-      const yOff = rowTop + ROW_H * OFF_Y;
-      const yOn = rowTop + ROW_H * ON_Y;
-      const color = m.color || '#00B5E2';
+        const lbl = document.createElementNS(svgNS, 'text');
+        lbl.setAttribute('class', 'state-step-axis-label');
+        lbl.setAttribute('x', String(x));
+        lbl.setAttribute('y', String(PAD_TOP - 12));
+        lbl.setAttribute('text-anchor', 'middle');
+        lbl.textContent = fmtTick(ts);
+        svg.appendChild(lbl);
+      }
 
-      const name = document.createElementNS(svgNS, 'text');
-      name.setAttribute('class', 'state-step-row-label');
-      name.setAttribute('x', String(PAD_LEFT - 10));
-      name.setAttribute('y', String(rowTop + ROW_H / 2 + 4));
-      name.setAttribute('text-anchor', 'end');
-      name.textContent = m.name.length > 20 ? `${m.name.slice(0, 19)}…` : m.name;
-      svg.appendChild(name);
+      machines.forEach((m, i) => {
+        const rowTop = PAD_TOP + i * ROW_H;
+        const yOff = rowTop + ROW_H * OFF_Y;
+        const yOn = rowTop + ROW_H * ON_Y;
+        const color = m.color || '#00B5E2';
 
-      const base = document.createElementNS(svgNS, 'line');
-      base.setAttribute('class', 'state-step-baseline');
-      base.setAttribute('x1', String(PAD_LEFT));
-      base.setAttribute('x2', String(PAD_LEFT + plotW));
-      base.setAttribute('y1', String(yOff));
-      base.setAttribute('y2', String(yOff));
-      svg.appendChild(base);
+        const name = document.createElementNS(svgNS, 'text');
+        name.setAttribute('class', 'state-step-row-label');
+        name.setAttribute('x', String(PAD_LEFT - 10));
+        name.setAttribute('y', String(rowTop + ROW_H / 2 + 4));
+        name.setAttribute('text-anchor', 'end');
+        name.textContent = m.name.length > 20 ? `${m.name.slice(0, 19)}…` : m.name;
+        svg.appendChild(name);
 
-      const blocks = buildBlocks(m.id);
+        const base = document.createElementNS(svgNS, 'line');
+        base.setAttribute('class', 'state-step-baseline');
+        base.setAttribute('x1', String(PAD_LEFT));
+        base.setAttribute('x2', String(PAD_LEFT + plotW));
+        base.setAttribute('y1', String(yOff));
+        base.setAttribute('y2', String(yOff));
+        svg.appendChild(base);
 
-      blocks.forEach((b) => {
-        const x1 = xOf(b.s);
-        const x2 = xOf(Math.min(b.e, DAY));
+        const blocks = buildBlocks(m.id);
+        const L = PAD_LEFT;
+        const R = PAD_LEFT + plotW;
 
-        const path = document.createElementNS(svgNS, 'path');
-        path.setAttribute('class', 'state-step-step');
-        path.setAttribute('stroke', color);
-        path.setAttribute(
-          'd',
-          `M ${x1} ${yOff} L ${x1} ${yOn} L ${x2} ${yOn} L ${x2} ${yOff}`,
-        );
-        svg.appendChild(path);
+        blocks.forEach((b) => {
+          if (b.e < winStart || b.s > winEnd) return;
+          const cs = Math.max(b.s, winStart);
+          const ce = Math.min(b.e, winEnd);
+          const x1 = Math.max(L, Math.min(R, xOf(cs)));
+          const x2 = Math.max(L, Math.min(R, xOf(ce)));
 
-        const up = arrow(x1, yOn + 1, 'up');
-        svg.appendChild(up);
-        up.addEventListener('mousemove', (e) =>
-          showTip(e as MouseEvent, `${m.name} · ON ${fmtTime(b.s)}`),
-        );
-        up.addEventListener('mouseleave', hideTip);
+          const path = document.createElementNS(svgNS, 'path');
+          path.setAttribute('class', 'state-step-step');
+          path.setAttribute('stroke', color);
+          path.setAttribute(
+            'd',
+            `M ${x1} ${yOff} L ${x1} ${yOn} L ${x2} ${yOn} L ${x2} ${yOff}`,
+          );
+          svg.appendChild(path);
 
-        const down = arrow(x2, yOff - 1, 'down');
-        svg.appendChild(down);
-        down.addEventListener('mousemove', (e) =>
-          showTip(e as MouseEvent, `${m.name} · OFF ${fmtTime(b.e)}`),
-        );
-        down.addEventListener('mouseleave', hideTip);
+          if (b.s >= winStart && b.s <= winEnd) {
+            const up = arrow(xOf(b.s), yOn + 1, 'up');
+            svg.appendChild(up);
+            up.addEventListener('mousemove', (e) =>
+              showTip(e as MouseEvent, `${m.name} · ON ${fmtTime(b.s)}`),
+            );
+            up.addEventListener('mouseleave', hideTip);
+          }
+          if (b.e >= winStart && b.e <= winEnd) {
+            const down = arrow(xOf(b.e), yOff - 1, 'down');
+            svg.appendChild(down);
+            down.addEventListener('mousemove', (e) =>
+              showTip(e as MouseEvent, `${m.name} · OFF ${fmtTime(b.e)}`),
+            );
+            down.addEventListener('mouseleave', hideTip);
+          }
+        });
       });
-    });
+    };
 
     container.appendChild(svg);
+
+    // Botón de reset: solo aparece cuando hay zoom activo.
+    const resetBtn = document.createElement('button');
+    resetBtn.className = 'state-step-reset';
+    resetBtn.type = 'button';
+    resetBtn.textContent = '↺ Vista completa';
+    resetBtn.style.display = 'none';
+    container.appendChild(resetBtn);
+    const updateReset = () => {
+      resetBtn.style.display = winStart > 0.5 || winEnd < DAY - 0.5 ? '' : 'none';
+    };
+    const resetView = () => {
+      winStart = 0;
+      winEnd = DAY;
+      draw();
+      updateReset();
+    };
+    resetBtn.addEventListener('click', resetView);
+
+    let raf = 0;
+    const schedule = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        draw();
+        updateReset();
+      });
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = svg.getBoundingClientRect();
+      const px = ((e.clientX - rect.left) / (rect.width || 1)) * width;
+      const anchor = timeAtX(px);
+      const factor = e.deltaY > 0 ? 1.25 : 1 / 1.25;
+      const curSpan = winEnd - winStart;
+      const span = Math.min(Math.max(curSpan * factor, MIN_SPAN), DAY);
+      const frac = (anchor - winStart) / curSpan;
+      const a = anchor - frac * span;
+      winStart = a;
+      winEnd = a + span;
+      clampWin();
+      schedule();
+    };
+
+    let dragging = false;
+    let lastPx = 0;
+    const onDown = (e: PointerEvent) => {
+      dragging = true;
+      lastPx = e.clientX;
+      if (svg.setPointerCapture) {
+        try { svg.setPointerCapture(e.pointerId); } catch { /* noop */ }
+      }
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!dragging) return;
+      const rect = svg.getBoundingClientRect();
+      const dpx = ((e.clientX - lastPx) / (rect.width || 1)) * width;
+      lastPx = e.clientX;
+      const dsec = (-dpx / plotW) * (winEnd - winStart);
+      winStart += dsec;
+      winEnd += dsec;
+      clampWin();
+      schedule();
+    };
+    const onUp = () => { dragging = false; };
+    const onDblClick = () => resetView();
+
+    svg.addEventListener('wheel', onWheel, { passive: false });
+    svg.addEventListener('pointerdown', onDown);
+    svg.addEventListener('pointermove', onMove);
+    svg.addEventListener('pointerup', onUp);
+    svg.addEventListener('pointercancel', onUp);
+    svg.addEventListener('dblclick', onDblClick);
+
+    draw();
 
     let lastW = width;
     const onResize = () => {
       const w = Math.max(container.clientWidth || 900, 480);
       if (Math.abs(w - lastW) < 8) return;
       lastW = w;
-      window.removeEventListener('resize', onResize);
-      this.renderStateStepTimeline(container, machines, intervals);
+      width = w;
+      plotW = Math.max(50, width - PAD_LEFT - PAD_RIGHT);
+      svg.setAttribute('width', String(width));
+      svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+      draw();
     };
     window.addEventListener('resize', onResize);
 
     return {
       destroy: () => {
         window.removeEventListener('resize', onResize);
+        svg.removeEventListener('wheel', onWheel);
+        svg.removeEventListener('pointerdown', onDown);
+        svg.removeEventListener('pointermove', onMove);
+        svg.removeEventListener('pointerup', onUp);
+        svg.removeEventListener('pointercancel', onUp);
+        svg.removeEventListener('dblclick', onDblClick);
+        resetBtn.removeEventListener('click', resetView);
+        if (raf) cancelAnimationFrame(raf);
         hideTip();
       },
     };
