@@ -6,6 +6,7 @@ import numpy as np
 import tornado.ioloop
 import tornado.web
 import tornado.escape
+import tornado.log
 from typing import Any
 
 # Configure stdout utf-8 for Windows console
@@ -359,6 +360,31 @@ class FrontendStaticHandler(tornado.web.StaticFileHandler):
     def set_extra_headers(self, path):
         self.set_header("Cache-Control", "no-cache, must-revalidate")
 
+def _access_log(handler):
+    """Log de acceso que silencia el ruido que genera el navegador.
+
+    Chrome (con DevTools/F12) sondea rutas como
+    /.well-known/appspecific/com.chrome.devtools.json y /favicon.ico, que
+    producen 404 inofensivos y ensucian la consola. Se filtran para que la
+    terminal solo muestre actividad real de la aplicacion.
+    """
+    path = handler.request.path.lower()
+    if path.startswith("/.well-known/") or path == "/favicon.ico":
+        return
+    status = handler.get_status()
+    try:
+        request_time = 1000.0 * handler.request.request_time()
+    except Exception:
+        request_time = 0.0
+    summary = f"{handler.request.method} {handler.request.uri} ({handler.request.remote_ip})"
+    if status < 400:
+        log_method = tornado.log.access_log.info
+    elif status < 500:
+        log_method = tornado.log.access_log.warning
+    else:
+        log_method = tornado.log.access_log.error
+    log_method("%d %s %.2fms", status, summary, request_time)
+
 def make_app():
     app_home = os.environ.get("NILM_APP_HOME", BASE_DIR)
     frontend_dir = os.path.join(app_home, "frontend")
@@ -378,7 +404,7 @@ def make_app():
             "path": frontend_dir,
             "default_filename": "index.html"
         }),
-    ], debug=True)
+    ], debug=True, log_function=_access_log)
 
 if __name__ == "__main__":
     port = 8000

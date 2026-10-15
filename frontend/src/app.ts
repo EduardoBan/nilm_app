@@ -867,12 +867,14 @@ class NILMApp {
 
   private renderTimelineTab() {
     if (!this.analysis) return;
-    const container = document.getElementById('gantt-container');
+    // La pestaña muestra ahora solo las "Líneas de Nivel" de tiempo de
+    // operación (se retiró el diagrama de Gantt de la interfaz).
+    const container = document.getElementById('operation-levels-container');
     if (!container) return;
 
     // machine_id llega como number desde NumpyEncoder; normalizar por si
-    // algun backend lo serializa como string ("0" !== 0 y el filtro del
-    // Gantt dejaba todas las filas vacias).
+    // algun backend lo serializa como string ("0" !== 0 y el filtro dejaba
+    // todas las filas vacias).
     const machines = this.analysis.machine_statistics.map(m => ({
       id: Number(m.id),
       name: escapeHtml(m.name),
@@ -895,16 +897,22 @@ class NILMApp {
           <p><strong>Sin intervalos de operación para mostrar.</strong></p>
           <p>${escapeHtml(warn || 'Solo se detectaron ' + this.analysis.total_events_detected + ' eventos. Baja el umbral de corriente (p. ej. 0.5 A) o reduce el N° de equipos y re-ejecuta el análisis.')}</p>
         </div>`;
-      const levelsContainer = document.getElementById('operation-levels-container');
-      if (levelsContainer) levelsContainer.innerHTML = '';
+      const stateEmpty = document.getElementById('state-timeline-container');
+      if (stateEmpty) stateEmpty.innerHTML = '';
       return;
     }
 
-    ChartEngine.renderGanttTimeline(container, machines, intervals as any);
+    ChartEngine.renderOperationLevelLines(container, machines, intervals as any);
 
-    const levelsContainer = document.getElementById('operation-levels-container');
-    if (levelsContainer) {
-      ChartEngine.renderOperationLevelLines(levelsContainer, machines, intervals as any);
+    // Diagrama escalonado ON/OFF con flechas (debajo de las Lineas de Nivel)
+    const stateContainer = document.getElementById('state-timeline-container');
+    if (stateContainer) {
+      const resState = ChartEngine.renderStateStepTimeline(
+        stateContainer,
+        machines,
+        intervals as any
+      );
+      this.chartCleanups.push(resState.destroy);
     }
   }
 

@@ -1100,6 +1100,204 @@ export class ChartEngine {
 
     container.appendChild(wrapper);
   }
+  /**
+   * Renders a stepped ON/OFF state diagram (one row per machine) with arrow
+   * markers: green up-arrow on OFF->ON transitions, red down-arrow on ON->OFF
+   * transitions. Uses SVG with 1:1 coordinates so arrows never distort.
+   */
+  static renderStateStepTimeline(
+    container: HTMLElement,
+    machines: Array<{ id: number; name: string; color: string }>,
+    intervals: Array<{ machine_id: number; start_time: string; end_time: string; duration_minutes: number }>
+  ): { destroy: () => void } {
+    container.innerHTML = '';
+
+    if (!machines.length) {
+      container.innerHTML =
+        '<div class="state-step-empty">Sin equipos para mostrar.</div>';
+      return { destroy: () => {} };
+    }
+
+    const DAY = 86400; // seconds in 24 h
+    const ROW_H = 64;
+    const PAD_LEFT = 150;
+    const PAD_RIGHT = 16;
+    const PAD_TOP = 26;
+    const PAD_BOTTOM = 8;
+    const OFF_Y = 0.72;
+    const ON_Y = 0.2;
+
+    const parseSec = (t: string): number => {
+      const p = String(t || '0:0:0').split(':').map(Number);
+      return (p[0] || 0) * 3600 + (p[1] || 0) * 60 + (p[2] || 0);
+    };
+    const fmtTime = (sec: number): string => {
+      sec = Math.max(0, Math.round(sec));
+      const h = Math.floor(sec / 3600) % 24;
+      const m = Math.floor((sec % 3600) / 60);
+      return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+    };
+
+    const buildBlocks = (machineId: number) => {
+      const ranges = intervals
+        .filter((it) => Number(it.machine_id) === Number(machineId))
+        .map((it) => {
+          const s = parseSec(it.start_time);
+          let e = parseSec(it.end_time);
+          if (e <= s) e = s + Math.max(300, it.duration_minutes * 60);
+          return { s, e };
+        })
+        .sort((a, b) => a.s - b.s);
+      const blocks: Array<{ s: number; e: number }> = [];
+      ranges.forEach((r) => {
+        const last = blocks.length ? blocks[blocks.length - 1] : null;
+        if (last && r.s <= last.e + 300) {
+          last.e = Math.max(last.e, r.e);
+        } else {
+          blocks.push({ s: r.s, e: r.e });
+        }
+      });
+      return blocks;
+    };
+
+    const tip = document.createElement('div');
+    tip.className = 'state-step-tip';
+    container.appendChild(tip);
+    const showTip = (evt: MouseEvent, text: string) => {
+      const rect = container.getBoundingClientRect();
+      tip.textContent = text;
+      tip.style.left = `${evt.clientX - rect.left}px`;
+      tip.style.top = `${evt.clientY - rect.top}px`;
+      tip.style.opacity = '1';
+    };
+    const hideTip = () => {
+      tip.style.opacity = '0';
+    };
+
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const arrow = (x: number, y: number, dir: 'up' | 'down') => {
+      const s = 7;
+      const pts =
+        dir === 'up'
+          ? `${x},${y - s} ${x - s * 0.7},${y + s * 0.4} ${x + s * 0.7},${y + s * 0.4}`
+          : `${x},${y + s} ${x - s * 0.7},${y - s * 0.4} ${x + s * 0.7},${y - s * 0.4}`;
+      const poly = document.createElementNS(svgNS, 'polygon');
+      poly.setAttribute('points', pts);
+      poly.setAttribute(
+        'class',
+        dir === 'up' ? 'state-step-arrow-up' : 'state-step-arrow-down',
+      );
+      return poly;
+    };
+
+    const width = Math.max(container.clientWidth || 900, 480);
+    const plotW = Math.max(50, width - PAD_LEFT - PAD_RIGHT);
+    const height = PAD_TOP + PAD_BOTTOM + machines.length * ROW_H;
+
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('class', 'state-step-svg');
+    svg.setAttribute('width', String(width));
+    svg.setAttribute('height', String(height));
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Diagrama escalonado de estado ON/OFF por equipo');
+
+    const xOf = (sec: number) => PAD_LEFT + (sec / DAY) * plotW;
+
+    for (let h = 0; h <= 24; h += 3) {
+      const x = xOf(h * 3600);
+      const grid = document.createElementNS(svgNS, 'line');
+      grid.setAttribute('class', 'state-step-gridline');
+      grid.setAttribute('x1', String(x));
+      grid.setAttribute('x2', String(x));
+      grid.setAttribute('y1', String(PAD_TOP - 6));
+      grid.setAttribute('y2', String(height - PAD_BOTTOM));
+      svg.appendChild(grid);
+
+      const lbl = document.createElementNS(svgNS, 'text');
+      lbl.setAttribute('class', 'state-step-axis-label');
+      lbl.setAttribute('x', String(x));
+      lbl.setAttribute('y', String(PAD_TOP - 12));
+      lbl.setAttribute(
+        'text-anchor',
+        h === 0 ? 'start' : h === 24 ? 'end' : 'middle',
+      );
+      lbl.textContent = `${h.toString().padStart(2, '0')}:00`;
+      svg.appendChild(lbl);
+    }
+
+    machines.forEach((m, i) => {
+      const rowTop = PAD_TOP + i * ROW_H;
+      const yOff = rowTop + ROW_H * OFF_Y;
+      const yOn = rowTop + ROW_H * ON_Y;
+      const color = m.color || '#00B5E2';
+
+      const name = document.createElementNS(svgNS, 'text');
+      name.setAttribute('class', 'state-step-row-label');
+      name.setAttribute('x', String(PAD_LEFT - 10));
+      name.setAttribute('y', String(rowTop + ROW_H / 2 + 4));
+      name.setAttribute('text-anchor', 'end');
+      name.textContent = m.name.length > 20 ? `${m.name.slice(0, 19)}…` : m.name;
+      svg.appendChild(name);
+
+      const base = document.createElementNS(svgNS, 'line');
+      base.setAttribute('class', 'state-step-baseline');
+      base.setAttribute('x1', String(PAD_LEFT));
+      base.setAttribute('x2', String(PAD_LEFT + plotW));
+      base.setAttribute('y1', String(yOff));
+      base.setAttribute('y2', String(yOff));
+      svg.appendChild(base);
+
+      const blocks = buildBlocks(m.id);
+
+      blocks.forEach((b) => {
+        const x1 = xOf(b.s);
+        const x2 = xOf(Math.min(b.e, DAY));
+
+        const path = document.createElementNS(svgNS, 'path');
+        path.setAttribute('class', 'state-step-step');
+        path.setAttribute('stroke', color);
+        path.setAttribute(
+          'd',
+          `M ${x1} ${yOff} L ${x1} ${yOn} L ${x2} ${yOn} L ${x2} ${yOff}`,
+        );
+        svg.appendChild(path);
+
+        const up = arrow(x1, yOn + 1, 'up');
+        svg.appendChild(up);
+        up.addEventListener('mousemove', (e) =>
+          showTip(e as MouseEvent, `${m.name} · ON ${fmtTime(b.s)}`),
+        );
+        up.addEventListener('mouseleave', hideTip);
+
+        const down = arrow(x2, yOff - 1, 'down');
+        svg.appendChild(down);
+        down.addEventListener('mousemove', (e) =>
+          showTip(e as MouseEvent, `${m.name} · OFF ${fmtTime(b.e)}`),
+        );
+        down.addEventListener('mouseleave', hideTip);
+      });
+    });
+
+    container.appendChild(svg);
+
+    let lastW = width;
+    const onResize = () => {
+      const w = Math.max(container.clientWidth || 900, 480);
+      if (Math.abs(w - lastW) < 8) return;
+      lastW = w;
+      window.removeEventListener('resize', onResize);
+      this.renderStateStepTimeline(container, machines, intervals);
+    };
+    window.addEventListener('resize', onResize);
+
+    return {
+      destroy: () => {
+        window.removeEventListener('resize', onResize);
+        hideTip();
+      },
+    };
+  }
 
   /**
    * Renders Bar Chart (Harmonics, 24h Activity)

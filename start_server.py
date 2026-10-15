@@ -44,7 +44,14 @@ def main():
     except Exception:
         pass
 
-    tornado.ioloop.IOLoop.current().start()
+    try:
+        tornado.ioloop.IOLoop.current().start()
+    except KeyboardInterrupt:
+        # Cierre limpio al pulsar Ctrl+C. Sin este bloque, Tornado/Windows
+        # imprimen un Traceback largo al interrumpir el bucle de eventos.
+        print("\n" + "=" * 65)
+        print("  [+] Servidor detenido correctamente. Hasta pronto!")
+        print("=" * 65 + "\n")
 
 if __name__ == "__main__":
     main()

@@ -173,7 +173,7 @@
     <nav class="nav-tabs-container">
       <button class="nav-tab active" data-tab="overview">📈 Curvas y Desagregación</button>
       <button class="nav-tab" data-tab="machines">🏭 Equipos Detectados</button>
-      <button class="nav-tab" data-tab="timeline">⏱️ Línea de Tiempo (Gantt)</button>
+      <button class="nav-tab" data-tab="timeline">⏱️ Línea de Tiempo</button>
       <button class="nav-tab" data-tab="features3d">🧊 Nube 3D de Actividad</button>
       <button class="nav-tab" data-tab="features2d">🔬 Espacios de Características</button>
       <button class="nav-tab" data-tab="hourly">📊 Distribución Horaria 24h</button>
@@ -271,19 +271,9 @@
       </div>
     </section>
 
-    <!-- Tab 3: Operational Timeline (Gantt) -->
+    <!-- Tab 3: Operational Timeline (Líneas de Nivel) -->
     <section id="tab-timeline" class="tab-content">
       <div class="card">
-        <div class="card-header">
-          <div>
-            <h2 class="card-title">⏱️ Diagrama de Gantt Operacional - Estado ON/OFF por Máquina</h2>
-            <p class="card-subtitle">Reconstrucción de los intervalos de funcionamiento continuo a lo largo del día (00:00 a 24:00)</p>
-          </div>
-        </div>
-        <div id="gantt-container"></div>
-      </div>
-
-      <div class="card" style="margin-top: 16px;">
         <div class="card-header">
           <div>
             <h2 class="card-title">📈 Tiempo de Operación - Líneas de Nivel</h2>
@@ -291,6 +281,17 @@
           </div>
         </div>
         <div id="operation-levels-container"></div>
+      </div>
+
+      <!-- Diagrama escalonado ON/OFF con flechas de transición -->
+      <div class="card" style="margin-top: 20px;">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">🔀 Diagrama Escalonado ON/OFF</h2>
+            <p class="card-subtitle">Estado de conmutación por equipo a lo largo del día · <span style="color:#10B981">↑ flecha verde = encendido</span> · <span style="color:#EF4444">↓ flecha roja = apagado</span></p>
+          </div>
+        </div>
+        <div id="state-timeline-container"></div>
       </div>
     </section>
 

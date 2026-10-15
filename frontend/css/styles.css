@@ -975,9 +975,9 @@ body {
 .levels-row {
   display: flex;
   align-items: center;
-  min-height: 42px;
+  min-height: 66px;
   border-bottom: 1px solid rgba(51, 65, 85, 0.25);
-  padding: 4px 0;
+  padding: 8px 0;
 }
 
 .levels-row:last-child {
@@ -1021,7 +1021,7 @@ body {
 .levels-track {
   position: relative;
   flex: 1;
-  height: 34px;
+  height: 56px;
   background: repeating-linear-gradient(to right,
       transparent 0, transparent calc(12.5% - 1px),
       var(--border-color) calc(12.5% - 1px), var(--border-color) 12.5%);
@@ -1058,7 +1058,7 @@ body {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  height: 12px;
+  height: 20px;
   border-radius: 6px;
   opacity: 0.9;
   cursor: pointer;
@@ -1067,14 +1067,14 @@ body {
 
 .levels-block:hover {
   opacity: 1;
-  height: 16px;
+  height: 28px;
   box-shadow: 0 0 8px rgba(255, 255, 255, 0.4);
 }
 
 .levels-time-label {
   position: absolute;
   top: 0;
-  font-size: 0.6rem;
+  font-size: 0.72rem;
   color: var(--text-dim);
   font-family: monospace;
   pointer-events: none;
@@ -1492,3 +1492,74 @@ body {
   color: #10B981;
   white-space: nowrap;
 }
+
+/* ==========================================================================
+   State Step Timeline (Diagrama escalonado ON/OFF con flechas)
+   Gráfico SVG: escalones por equipo con flecha ↑ (encendido) y ↓ (apagado).
+   ========================================================================== */
+.state-step-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: inherit;
+}
+.state-step-row-label {
+  font-size: 12px;
+  fill: var(--text-main, #e6edf3);
+  font-weight: 600;
+}
+.state-step-axis-label {
+  font-size: 10px;
+  fill: var(--text-dim, #8b949e);
+}
+.state-step-step {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.state-step-arrow-up {
+  fill: #10B981;
+  stroke: #10B981;
+  stroke-width: 1;
+}
+.state-step-arrow-down {
+  fill: #EF4444;
+  stroke: #EF4444;
+  stroke-width: 1;
+}
+.state-step-gridline {
+  stroke: rgba(139, 148, 158, 0.18);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.state-step-baseline {
+  stroke: rgba(139, 148, 158, 0.35);
+  stroke-width: 1;
+}
+.state-step-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-dim, #8b949e);
+  font-size: 0.9rem;
+}
+/* Etiqueta flotante al pasar el mouse por una transición */
+.state-step-tip {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(13, 17, 23, 0.95);
+  border: 1px solid rgba(139, 148, 158, 0.35);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  color: #e6edf3;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate(-50%, -120%);
+  transition: opacity 0.12s ease;
+  z-index: 5;
+}
+#state-timeline-container {
+  position: relative;
+}
+
