@@ -818,6 +818,60 @@
             <canvas id="chart-fhmm-compare"></canvas>
           </div>
         </div>
+
+      <!-- 📖 Metodología: FHMM-Viterbi -->
+      <div class="card methodology-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">📖 ¿Qué muestra esta pestaña de FHMM-Viterbi?</h2>
+            <p class="card-subtitle">Desagregación mediante Modelo Oculto de Markov Factorial (FHMM) y algoritmo de Viterbi sobre la potencia total medida</p>
+          </div>
+        </div>
+        <div class="methodology-body">
+          <div class="method-block">
+            <h3 class="method-heading">🧭 Cómo se construye — de P_total a los estados de cada equipo</h3>
+            <ol class="method-steps">
+              <li><strong>Modelo de estados por equipo.</strong> Cada equipo se modela como un proceso Markov con estados discretos (OFF, ON, niveles intermedios si usa FHMM multi-estado).</li>
+              <li><strong>Producto cartesiano de estados.</strong> El estado global del sistema es la combinación de los estados de todos los equipos; su media combinada = base + Σ niveles activos.</li>
+              <li><strong>Emisiones observadas.</strong> La potencia total medida P_total es la emisión observable, modelo como una combinación lineal de las emisiones de cada estado activo más ruido.</li>
+              <li><strong>Matrices de transición.</strong> Las probabilidades de pasar de un estado global a otro se modelan con el producto de Kronecker de las matrices de transición individuales de cada equipo.</li>
+              <li><strong>Decodificación Viterbi (MAP).</strong> Se encuentra la secuencia de estados globales más probable que explica la serie temporal observada de P_total, asignando a cada instante la contribución de cada equipo.</li>
+            </ol>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">📐 Fundamento teórico y técnicas usadas</h3>
+            <ul class="method-steps">
+              <li><strong>Modelo Oculto de Markov (HMM):</strong> modelo estadístico donde los estados del sistema (qué equipo está encendido) son ocultos y solo se observa la potencia total (emisión).</li>
+              <li><strong>FHMM (Factorial Hidden Markov Model):</strong> extensión de HMM para múltiples cadenas de Markov en paralelo (una por equipo), permitiendo modelar la superposición de consumos de varios equipos simultáneamente.</li>
+              <li><strong>Algoritmo de Viterbi:</strong> programación dinámica que encuentra la secuencia de estados ocultos más probable (máximo a posteriori, MAP) dada la secuencia de observaciones.</li>
+              <li><strong>Producto de Kronecker:</strong> se usa para construir la matriz de transición del estado global a partir de las matrices de transición de cada equipo, manteniendo la independencia condicional entre equipos.</li>
+              <li><strong>Priors horarios (MEJORA #2):</strong> información previa sobre la probabilidad de uso de cada equipo según la hora del día, que mejora la precisión de la decodificación en periodos de baja variabilidad.</li>
+            </ul>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">🧪 Explicación de los resultados obtenidos</h3>
+            <ul class="method-steps">
+              <li><strong>Secuencia de estados decodificada.</strong> Para cada instante se sabe qué equipos están ON/OFF y en qué nivel, reconstruyendo el consumo individual de cada equipo a partir de P_total.</li>
+              <li><strong>Media combinada = base + Σ niveles.</strong> La reconstrucción de potencia es la suma de las bases y los niveles activos de cada equipo, lo que permite comparar con la curva medida y calcular el error de desagregación.</li>
+              <li><strong>Curva Viterbi vs curva medida.</strong> Cuanto más se superpongan, mejor es la calidad de la desagregación; desviaciones sistemáticas pueden indicar equipos no modelados o niveles de estado incorrectos.</li>
+              <li><strong>Productos de estados > 400 (podado).</strong> Si el espacio de estados combinados es muy grande, se aplica poda para mantener el cálculo tractable, usando descenso por eventos como fallback.</li>
+              <li><strong>hmmlearn vs fallback.</strong> Cuando hmmlearn está disponible se usa FHMM exacto con Viterbi; si no, se usa un descenso por eventos basado en umbrales como alternativa.</li>
+            </ul>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">💡 Casos de uso y descripción de los mismos</h3>
+            <ul class="method-steps">
+              <li><strong>Desagregación sin sensores individuales:</strong> a partir de la potencia total del medidor general, se estima el consumo de cada equipo sin necesidad de medidores por circuito.</li>
+              <li><strong>Identificación de equipos multi-estado.</strong> A diferencia del umbral simple, FHMM puede modelar equipos con varios niveles de consumo (ej. aire acondicionado con compresor a distintas velocidades).</li>
+              <li><strong>Validación de la desagregación.</strong> La curva decodificada por Viterbi se compara con la curva medida para calcular el error de reconstrucción y la fiabilidad de los kWh asignados a cada equipo.</li>
+              <li><strong>Análisis de coincidencia de estados.</strong> Permite detectar cuándo varios equipos funcionan simultáneamente y cómo se superponen sus consumos en la curva total.</li>
+              <li><strong>Toma de decisiones operativas.</strong> Conocer el consumo real de cada equipo permite identificar equipos ineficientes, optimizar horarios de uso y reducir la demanda máxima.</li>
+            </ul>
+          </div>
+        </div>
       </div>
     </section>
 
