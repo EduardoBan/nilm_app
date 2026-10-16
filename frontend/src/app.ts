@@ -1162,6 +1162,35 @@ class NILMApp {
         'estado', 'Secuencia Viterbi combinada (índice de estado conjunto)'
       );
       this.chartCleanups.push(res.destroy);
+
+      // --- Nueva curva: Curva Viterbi (reconstrucción de potencia) vs Curva medida ---
+      const canvasCompare = document.getElementById('chart-fhmm-power-compare') as HTMLCanvasElement;
+      if (canvasCompare && fx2.state_means_kw && fx2.state_means_kw.length > 0) {
+        const step = Math.max(1, fx2.downsample_step || 1);
+        const pTotal = this.analysis.p_total || [];
+        // Reconstruir curva Viterbi: mapear cada estado combinado a su media de potencia (kW)
+        const viterbiPowerDs = fx2.combined_seq_ds.map((s: number) => fx2.state_means_kw![s] ?? 0);
+        // Upsample: repetir cada valor `step` veces para igualar longitud de p_total
+        const viterbiPowerFull: number[] = [];
+        for (let i = 0; i < viterbiPowerDs.length; i++) {
+          for (let j = 0; j < step; j++) {
+            viterbiPowerFull.push(viterbiPowerDs[i]);
+          }
+        }
+        const n = Math.min(viterbiPowerFull.length, pTotal.length);
+        const viterbiPower = viterbiPowerFull.slice(0, n);
+        const pTotalTrimmed = pTotal.slice(0, n);
+        const timestampsTrimmed = (this.analysis.timestamps || []).slice(0, n);
+        const resCompare = ChartEngine.renderTimeSeries(
+          canvasCompare, timestampsTrimmed,
+          [
+            { name: 'Curva Viterbi (reconstrucción FHMM)', data: viterbiPower, color: '#8B5CF6' },
+            { name: 'Potencia Total Medida', data: pTotalTrimmed, color: '#00B5E2', fill: true }
+          ],
+          'kW', 'Curva Viterbi vs Potencia Total Medida'
+        );
+        this.chartCleanups.push(resCompare.destroy);
+      }
     } else {
       // Fallback: curvas desagregadas multi-estado.
       const seriesList = [
