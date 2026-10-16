@@ -536,6 +536,72 @@
           </div>
         </div>
       </div>
+      <!-- 📖 Metodología: qué revelan los espacios de características -->
+      <div class="card methodology-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">📖 ¿Qué revelan estos espacios de características?</h2>
+            <p class="card-subtitle">Proyecciones 2D del vector de firma (10 dimensiones): cada punto es un salto ON/OFF detectado en el medidor general</p>
+          </div>
+        </div>
+        <div class="methodology-body">
+          <div class="method-block">
+            <h3 class="method-heading">🧭 Cómo se construyen — del salto al punto 2D</h3>
+            <ol class="method-steps">
+              <li><strong>Cada punto es un evento.</strong> Los mismos saltos ON/OFF de la detección (umbral / CUSUM / híbrido) que alimentan las fichas de Equipos: encendidos con ΔP, ΔQ, ΔI positivos y apagados simétricos negativos.</li>
+              <li><strong>Vector de firma (10 features) + estandarizado.</strong> Cada salto se describe con |ΔP|, |ΔI|, THD, |ΔQ|, ΔH3/ΔH5/ΔH7, Δcos φ, inrush y concentración de fase, y se estandariza (StandardScaler) para que ninguna magnitud domine al agrupar.</li>
+              <li><strong>Clustering en 10D, visualización en 2D.</strong> K-Means (defecto, semilla 42), GMM o DBSCAN agrupan en el espacio completo (un cluster = un color = un equipo); con ⚡Auto-K se barre k = 2…8 y se elige el de mayor Silhouette (desempate: menor Davies-Bouldin). Aquí solo se <em>proyectan</em> dos pares físicamente interpretables.</li>
+              <li><strong>Render.</strong> Ejes con auto-rango y margen del 8 % (el 0 queda visible si hay ON y OFF); pasa el ratón sobre un punto para ver equipo, valores y hora. Son los mismos <em>scatter_events</em> del análisis, sin filtrado adicional.</li>
+            </ol>
+          </div>
+          <div class="method-grid">
+            <div class="method-chart">
+              <h3>🎯 Gráfico 1 · ΔP vs ΔQ — separación por principio físico</h3>
+              <p><strong>Qué muestra:</strong> X = salto de potencia activa ΔP [kW] (trabajo útil + calor) · Y = salto de reactiva ΔQ [kvar] (energía de magnetización que va y vuelve cada ciclo).</p>
+              <p><strong>Cómo leerlo:</strong> cargas resistivas (calentadores, hornos) caen sobre el eje X (Q ≈ 0); motores DOL/compresores forman la nube alta en ΔP con ΔQ &gt; 0 (cuanta más inductancia, más alta); la electrónica queda en ΔP modesto. Una nube compacta y monocolor = firma estable cuyo centroide es la potencia nominal de la ficha.</p>
+            </div>
+            <div class="method-chart">
+              <h3>⚡ Gráfico 2 · ΔI vs THD — separación por linealidad</h3>
+              <p><strong>Qué muestra:</strong> X = salto de corriente ΔI [A] (tamaño del salto) · Y = distorsión armónica de corriente THD [%] (huella no-lineal: 0 % = senoidal pura).</p>
+              <p><strong>Cómo leerlo:</strong> motores abajo-derecha (gran ΔI, THD &lt; 10 %) · variadores/rectificadores arriba (THD ≥ 35 % aunque su ΔI sea modesta) · resistivas abajo-izquierda (poco ΔI, THD bajo). Es el plano que distingue lo que el ΔP–ΔQ no puede: un motor y un VFD de igual potencia se solapan en el gráfico 1 pero se separan en vertical aquí.</p>
+            </div>
+          </div>
+          <div class="method-grid">
+            <div class="method-chart">
+              <h3>🤖 Técnicas usadas y por qué estos dos planos</h3>
+              <p><strong>K-Means / GMM / DBSCAN:</strong> minimizan la dispersión intra-cluster en el espacio estandarizado de 10D (K-Means: distancia al centroide; GMM: verosimilitud gaussiana con solape; DBSCAN: densidad con eps 0,75 y min_samples 4, aislando eventos raros como ruido).</p>
+              <p><strong>Auto-K:</strong> Silhouette (compacidad + separación, mayor = mejor) propone k y Davies-Bouldin desempata hacia grupos compactos; evita pedir más equipos de los que los datos sostienen.</p>
+              <p><strong>Proyección física guiada:</strong> en vez de un PCA abstracto se eligen los pares con significado eléctrico directo — ΔP–ΔQ (naturaleza de la carga) y ΔI–THD (linealidad) — para que cada eje se lea en kW, kvar, A y %.</p>
+            </div>
+            <div class="method-chart">
+              <h3>📐 Fundamento teórico</h3>
+              <p><strong>Hipótesis NILM por eventos (Hart, 1992):</strong> cada equipo conmuta con una firma repetible; en el espacio de features esas repeticiones forman una nube compacta = un cluster = un equipo.</p>
+              <p><strong>Descomposición P–Q:</strong> la activa mide el consumo irreversible y la reactiva la magnetización; su cociente (tan φ) identifica familias: resistiva ≈ 0, motor 0,5–1,5, otros rangos para cargas especiales o compensadas.</p>
+              <p><strong>Huella armónica (IEEE 1459):</strong> THD = I_armónicas/I_fundamental; cargas lineales ≈ 0 % y la electrónica de conmutación dispara 3.º/5.º/7.º armónico, lo que la hace separable aunque su potencia coincida con un motor.</p>
+            </div>
+          </div>
+          <div class="method-block">
+            <h3 class="method-heading">🧪 Explicación de los resultados obtenidos</h3>
+            <ul class="method-steps">
+              <li><strong>Nubes compactas y monocolor</strong> = clustering sólido: esos eventos sostienen con confianza la potencia nominal, los arranques y los kWh de la ficha del equipo.</li>
+              <li><strong>Dos colores mezclados en un plano pero separados en el otro</strong> = el espacio 10D sí los distingue (el color ya lo dice); confirma por qué hacen falta ambas vistas y los armónicos en el vector.</li>
+              <li><strong>Mezcla persistente en ambos planos</strong> = posible sobrefragmentación (K alto) o dos equipos gemelos; prueba Auto-K u otro algoritmo, revisa umbrales y valida en Benchmark/Validación.</li>
+              <li><strong>Puntos sueltos lejos de su nube</strong> = arranques anómalos, estados parciales (candidatos a FHMM multi-estado) o falsos eventos; cruza con Curvas y Validación antes de actuar.</li>
+              <li><strong>Simetría ON/OFF</strong> = el apagado espeja al encendido porque el salto es opuesto; asimetrías sistemáticas delatan arranque progresivo o parada con inercia.</li>
+            </ul>
+          </div>
+          <div class="method-block">
+            <h3 class="method-heading">💡 Casos de uso</h3>
+            <ul class="method-steps">
+              <li><strong>Auditar el clustering</strong> antes de fiarse de kWh y costes: lo que aquí se mezcla, en las fichas también.</li>
+              <li><strong>Tipificar equipos por familia</strong> (resistivo / motor / electrónico) y priorizar medidas: desplazamiento a valle, filtros de armónicos, arrancadores suaves.</li>
+              <li><strong>Justificar el K elegido:</strong> nubes bien separadas validan visualmente el Auto-K frente a dirección o cliente.</li>
+              <li><strong>Detectar cargas nuevas o degradadas:</strong> una nube que se alarga o un color que se desdobla con el tiempo = deriva del equipo.</li>
+              <li><strong>Formación:</strong> explicar NILM sin fórmulas — cada color es un equipo descubierto solo con el medidor general.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- Tab 5: Hourly Activity Distribution -->

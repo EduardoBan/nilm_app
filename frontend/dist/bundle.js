@@ -823,10 +823,51 @@ class ChartEngine {
 
       ctx.restore(); // fin clip
 
+      // --- Leyenda por cluster (top-right dentro del area de dibujo) ---
+      const legendMap = new Map();
+      events.forEach(e => {
+        if (!legendMap.has(e.cluster)) {
+          legendMap.set(e.cluster, { color: e.color, label: e.label });
+        }
+      });
+      const legendEntries = Array.from(legendMap.values());
+      const legendW = 170;
+      const entryH = 18;
+      const legendH = legendEntries.length * entryH + 26;
+      const legendX = width - padRight - legendW;
+      const legendY = padTop + 10;
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(legendX, legendY, legendW, legendH, 6);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = chartColor('--chart-text', '#CBD5E1');
+      ctx.font = 'bold 11px Inter, system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('Equipos', legendX + 12, legendY + 18);
+
+      legendEntries.forEach((entry, i) => {
+        const yy = legendY + 34 + i * entryH;
+        ctx.fillStyle = entry.color + 'CC';
+        ctx.beginPath();
+        ctx.arc(legendX + 16, yy - 5, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 0.7;
+        ctx.stroke();
+        ctx.fillStyle = chartColor('--chart-text', '#E2E8F0');
+        ctx.font = '11px Inter, system-ui, sans-serif';
+        ctx.fillText(entry.label, legendX + 28, yy);
+      });
+
       // Hover tooltip
       if (hoveredEvent) {
-        const px = padLeft + (hoveredEvent.x / maxX) * plotW;
-        const py = padTop + plotH - (hoveredEvent.y / maxY) * plotH;
+        const px = mapX(hoveredEvent.x);
+        const py = mapY(hoveredEvent.y);
 
         ctx.beginPath();
         ctx.arc(px, py, 8, 0, Math.PI * 2);
@@ -866,8 +907,8 @@ class ChartEngine {
 
       let found = null;
       for (const ev of events) {
-        const px = padLeft + (ev.x / maxX) * plotW;
-        const py = padTop + plotH - (ev.y / maxY) * plotH;
+        const px = mapX(ev.x);
+        const py = mapY(ev.y);
         const dist = Math.hypot(mx - px, my - py);
         if (dist <= 10) {
           found = ev;
