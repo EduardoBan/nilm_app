@@ -658,6 +658,60 @@
           <canvas id="chart-harmonics-spectrum"></canvas>
         </div>
       </div>
+
+      <!-- 📖 Metodología: Calidad de Red y Armónicos -->
+      <div class="card methodology-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">📖 ¿Qué muestra esta pestaña de Calidad de Red y Armónicos?</h2>
+            <p class="card-subtitle">Análisis de desbalance trifásico, estabilidad de tensión y contenido armónico para diagnóstico de cargas no lineales y variadores</p>
+          </div>
+        </div>
+        <div class="methodology-body">
+          <div class="method-block">
+            <h3 class="method-heading">🧭 Cómo se construye — de la medida al diagnóstico de calidad</h3>
+            <ol class="method-steps">
+              <li><strong>Adquisición trifásica.</strong> Se miden simultáneamente las corrientes (L1, L2, L3) y tensiones (U L1, L2, L3) del punto de conexión común (PCC).</li>
+              <li><strong>Cálculo de magnitudes de calidad.</strong> A partir de las formas de onda se obtienen RMS por fase, desbalance de corriente y tensión, potencia activa/reactiva por fase y kVA de distorsión.</li>
+              <li><strong>Espectro armónico hasta H25.</strong> Se descompone la corriente en sus componentes armónicos (orden 3 al 25) mediante análisis de Fourier para identificar cargas no lineales.</li>
+              <li><strong>Firma armónica transitoria por equipo.</strong> En el instante de arranque se mide el salto ΔH3/ΔH5/ΔH7 para distinguir variadores/rectificadores (ΔH alto, ΔP modesto) de motores DOL (ΔP/ΔQ alto, ΔH bajo).</li>
+            </ol>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">📐 Fundamento teórico y técnicas usadas</h3>
+            <ul class="method-steps">
+              <li><strong>Descomposición IEEE 1459 de potencias:</strong> potencia activa (irreversible), potencia reactiva y potencia de distorsión; el kVA de distorsión cuantifica la capacidad de red perdida por armónicos.</li>
+              <li><strong>THD de corriente (IEEE 519):</strong> THD = I_armónicas / I_fundamental × 100 %. Cargas lineales (resistencias, motores inductivos) ≈ 0–5 %; electrónica de conmutación (VFD, rectificadores, iluminación LED) dispara armónicos 3.º/5.º/7.º y superiores.</li>
+              <li><strong>Desbalance de fases (NEMA / IEC):</strong> diferencia entre la fase más cargada y la menos cargada respecto al promedio; valores elevados indican fase sobrecargada o carga monofásica mal distribuida.</li>
+              <li><strong>Caída de tensión:</strong> variación del RMS de tensión por fase respecto al nominal; caídas sostenidas apuntan a problemas de impedancia de línea, contactos deficientes o sobrecarga del transformador.</li>
+              <li><strong>Análisis transitorio armónico (ΔH):</strong> diferencia entre el contenido armónico justo antes y justo después del salto de arranque; permite identificar la tecnología del equipo sin necesidad de medirlo individualmente.</li>
+            </ul>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">🧪 Explicación de los resultados obtenidos</h3>
+            <ul class="method-steps">
+              <li><strong>THD alto en una fase.</strong> Sospechoso de armónicos: variador de velocidad, rectificador o iluminación de conmutación conectada a esa fase; verificar filtros y dimensionar según IEEE 519.</li>
+              <li><strong>Desbalance de corriente elevado.</strong> Fase sobrecargada o carga monofásica concentrada; riesgo de sobrecalentamiento del neutro y pérdidas adicionales en transformadores.</li>
+              <li><strong>Caída de tensión sostenida.</strong> Indica impedancia de línea elevada, conexiones sueltas o transformador bajo dimensión; afecta al rendimiento de equipos sensibles.</li>
+              <li><strong>kVA de distorsión significativo.</strong> Capacidad de red "perdida" por armónicos; justifica la instalación de filtros activos/pasivos o el recableado de la carga problemática.</li>
+              <li><strong>Firma ΔH5 alta con ΔP modesto.</strong> Patróneo típico de electrónica de potencia (VFD/retificador); confirma que los armónicos provienen de ese equipo y no del motor.</li>
+            </ul>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">💡 Casos de uso y descripción de los mismos</h3>
+            <ul class="method-steps">
+              <li><strong>Dimensionar filtros de armónicos:</strong> el espectro hasta H25 indica qué órdenes dominan (3.º/5.º/7.º para trifásico, triplenos para monofásico) y guía la selección de filtros pasivos o activos.</li>
+              <li><strong>Rebalancear cargas entre fases:</strong> el desbalance por fase permite mover monofásicos de la fase más cargada a las menos cargadas, reduciendo pérdidas y calentamiento del neutro.</li>
+              <li><strong>Justificar intervención en trafo/cableado:</strong> caídas de tensión y kVA de distorsión elevados documentan la necesidad de reforzar la instalación o cambiar el transformador.</li>
+              <li><strong>Verificar cumplimiento normativo:</strong> comparar THD medido contra límites de IEEE 519/IEC 61000-3-6 para determinar si la instalación cumple con los requisitos de calidad de energía.</li>
+              <li><strong>Diagnóstico predictivo de equipos:</strong> una firma armónica transitoria que empeora con el tiempo (ΔH creciente) indica degradación de variadores o componentes de conmutación antes de que fallen.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- Tab: Firma Armónica por equipo (PASO 1: ΔH3/ΔH5/ΔH7 transitorios) -->
