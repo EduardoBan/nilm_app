@@ -741,6 +741,59 @@
           </div>
         </div>
       </div>
+
+      <!-- 📖 Metodología: Firma Armónica -->
+      <div class="card methodology-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">📖 ¿Qué muestra esta pestaña de Firma Armónica?</h2>
+            <p class="card-subtitle">Identificación de tecnología de carga por su firma armónica transitoria en el arranque (ΔH3 / ΔH5 / ΔH7)</p>
+          </div>
+        </div>
+        <div class="methodology-body">
+          <div class="method-block">
+            <h3 class="method-heading">🧭 Cómo se construye — del salto de arranque a la firma armónica</h3>
+            <ol class="method-steps">
+              <li><strong>Detección del arranque.</strong> Se localiza el instante exacto de salto ON de cada equipo a partir del medidor general (umbral / CUSUM / híbrido).</li>
+              <li><strong>Ventana transitoria.</strong> Se toma una ventana corta de corriente justo antes y justo después del salto para capturar el contenido armónico en el arranque.</li>
+              <li><strong>Descomposición armónica por orden.</strong> Se calcula la amplitud de las armónicas 3, 5 y 7 (ΔH3, ΔH5, ΔH7) como diferencia entre la ventana post-arranque y la pre-arranque.</li>
+              <li><strong>Promedio por equipo.</strong> Se promedian los saltos ΔH de todos los arranques detectados de un mismo equipo para obtener su firma armónica representativa.</li>
+            </ol>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">📐 Fundamento teórico y técnicas usadas</h3>
+            <ul class="method-steps">
+              <li><strong>Análisis de Fourier (FFT/DFT):</strong> descompone la forma de onda de corriente en sus componentes armónicos (orden 3, 5, 7, …, 25) para identificar contenido no lineal.</li>
+              <li><strong>Firma armónica transitoria (ΔH):</strong> ΔH = I_armónica_post_arranque − I_armónica_pre_arranque; captura el salto de contenido armónico que cada tecnología inyecta a la red al conectarse.</li>
+              <li><strong>Discriminación por tecnología de carga:</strong> variadores y rectificadores inyectan armónicas altas (ΔH alto) con salto de potencia activo modesto (ΔP bajo); motores DOL inyectan poco armónico (ΔH bajo) pero gran salto de potencia activa/reactiva (ΔP/ΔQ alto).</li>
+              <li><strong>IEEE 519 / IEC 61000-3-6:</strong> marcos normativos que definen los límites admisibles de distorsión armónica (THD) por orden y nivel de tensión en el punto de conexión común.</li>
+            </ul>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">🧪 Explicación de los resultados obtenidos</h3>
+            <ul class="method-steps">
+              <li><strong>ΔH5 y ΔH7 altos, ΔP modesto.</strong> Patrón típico de electrónica de potencia (VFD, variador de velocidad, rectificador, iluminación LED de conmutación); los armónicos dominan sobre el salto de potencia.</li>
+              <li><strong>ΔH bajo, ΔP/ΔQ alto.</strong> Patrón típico de motor de arranque directo (DOL); la mayor parte del salto es potencia activa/reactiva con poco contenido armónico.</li>
+              <li><strong>Firma mixta.</strong> Equipo con componentes mixtos (ej. motor con variador, o carga con compensadores); requiere corroborar con otras pestañas (Curvas, Espacios de Características).</li>
+              <li><strong>Firma estable entre arranques.</strong> Indica comportamiento repetible del equipo; confiable para identificación y seguimiento.</li>
+              <li><strong>Firma variable o degradada.</strong> ΔH que crece con el tiempo sugiere desgaste de componentes de conmutación o filtros del variador perdiendo efectividad.</li>
+            </ul>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">💡 Casos de uso y descripción de los mismos</h3>
+            <ul class="method-steps">
+              <li><strong>Identificar tecnología sin medir individualmente:</strong> a partir del medidor general, la firma ΔH permite saber si un arranque corresponde a un variador o a un motor directo.</li>
+              <li><strong>Validar el clustering de equipos:</strong> los clusters obtenidos en las pestañas de espacios de características deben coincidir con las firmas armónicas esperadas por tecnología.</li>
+              <li><strong>Dimensionar filtros armónicos:</strong> conocer qué órdenes dominan (3.º, 5.º, 7.º) guía la selección de filtros pasivos o activos para cada carga problemática.</li>
+              <li><strong>Diagnóstico predictivo:</strong> una firma ΔH que empeora progresivamente indica degradación del equipo antes de que falle, permitiendo mantenimiento programado.</li>
+              <li><strong>Verificación de cumplimiento normativo:</strong> comparar el contenido armónico medido contra límites de IEEE 519/IEC 61000-3-6 para cada equipo identificado.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- Tab: FHMM exacto Viterbi (PASO 2: hmmlearn sobre P_total) -->
