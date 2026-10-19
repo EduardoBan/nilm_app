@@ -617,6 +617,56 @@
           <canvas id="chart-hourly-activity"></canvas>
         </div>
       </div>
+
+      <!-- 📖 Metodología: Actividad Horaria 24h -->
+      <div class="card methodology-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">📖 ¿Qué muestra la distribución horaria 24h?</h2>
+            <p class="card-subtitle">Conteo de arranques y minutos de operación por hora del día, a partir de los eventos ON/OFF detectados en el medidor general</p>
+          </div>
+        </div>
+        <div class="methodology-body">
+          <div class="method-block">
+            <h3 class="method-heading">🧭 Cómo se construye — del evento a la barra horaria</h3>
+            <ol class="method-steps">
+              <li><strong>Eventos ON/OFF.</strong> Cada arranque y parada detectado (umbral / CUSUM / híbrido) se asigna a su hora del día (0–23) según el timestamp del salto.</li>
+              <li><strong>Conteo de arranques.</strong> Se cuenta cuántos ON ocurren en cada hora: una barra alta = hora de mucha actividad de conmutación.</li>
+              <li><strong>Minutos de operación.</strong> Se suman los minutos que cada equipo permanece ON dentro de cada hora, usando los intervalos ON↔OFF emparejados y estabilizados.</li>
+              <li><strong>Agrupación por turno.</strong> Las horas se agrupan en turnos (mañana, tarde, noche, madrugada) para identificar patrones laborales y de fuera de horario.</li>
+            </ol>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">📐 Fundamento teórico y técnicas usadas</h3>
+            <ul class="method-steps">
+              <li><strong>Patrones de uso por hora:</strong> análisis de series temporales discretas donde cada evento ON/OFF es un punto en el eje de horas (0–23).</li>
+              <li><strong>Intervalos de operación:</strong> emparejamiento secuencial o húngaro de ON↔OFF para calcular duración real por hora, no solo conteo de saltos.</li>
+              <li><strong>Detección de horas pico:</strong> picos en el histograma de arranques identifican momentos de mayor demanda simultánea.</li>
+            </ul>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">🧪 Explicación de los resultados obtenidos</h3>
+            <ul class="method-steps">
+              <li><strong>Pico en horas laborales (8–18h).</strong> Patrón típico de oficinas, comercios y fábricas en turno diurno.</li>
+              <li><strong>Arranques nocturnos (00–06h).</strong> Sospechoso de equipos que no deberían funcionar: neveras industriales, calentadores, ciclos automáticos o fallos de control.</li>
+              <li><strong>Pico matutino (6–9h).</strong> Arranque simultáneo de múltiples equipos al iniciar la jornada: compresores, HVAC, maquinaria.</li>
+              <li><strong>Distribución plana.</strong> Equipo que funciona de forma continua o con pocos ciclos (ej. iluminación, servidores).</li>
+            </ul>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">💡 Casos de uso y descripción de los mismos</h3>
+            <ul class="method-steps">
+              <li><strong>Optimización de turnos.</strong> Identificar equipos que arrancan fuera de horario y reprogramar su operación a horas valle.</li>
+              <li><strong>Detección de ciclos anómalos.</strong> Arranques frecuentes en horas de baja actividad indican termostatos defectuosos o controles mal ajustados.</li>
+              <li><strong>Planificación de capacidad.</strong> Conocer las horas de mayor demanda simultánea para dimensionar la instalación eléctrica y evitar sobrecargas.</li>
+              <li><strong>Imputación de costes por turno.</strong> Asignar el consumo a turno mañana/tarde/noche para facturación interna y presupuestos de ahorro energético.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- Tab 6: Power Quality & Harmonics -->
@@ -904,6 +954,57 @@
           </div>
         </div>
       </div>
+
+      <!-- 📖 Metodología: Validación de la desagregación -->
+      <div class="card methodology-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">📖 ¿Qué muestra la validación de desagregación?</h2>
+            <p class="card-subtitle">Error de reconstrucción, calidad de detección ON/OFF y métricas de arranques (TP/FP/FN) frente a la referencia de eventos, con intervalos de confianza (bootstrap)</p>
+          </div>
+        </div>
+        <div class="methodology-body">
+          <div class="method-block">
+            <h3 class="method-heading">🧭 Cómo se construye — de la desagregación a la validación</h3>
+            <ol class="method-steps">
+              <li><strong>Error de reconstrucción.</strong> Se compara P_total medida contra baseline + Σ curvas desagregadas: error medio absoluto (MAE), error cuadrático medio (RMSE) y error relativo de energía (RE %).</li>
+              <li><strong>Matriz de confusión ON/OFF.</strong> La referencia son los eventos ON/OFF detectados (pareo de saltos); la predicción es la curva desagregada umbralizada. Se calculan verdaderos positivos (TP), falsos positivos (FP) y falsos negativos (FN).</li>
+              <li><strong>Métrica F1.</strong> F1 = 2·(Precisión·Recall)/(Precisión+Recall); F1 alto ⇒ desagregación fiable para cada equipo.</li>
+              <li><strong>Intervalos de confianza (bootstrap, MEJORA #12).</strong> Remuestreo con reposición de los errores de reconstrucción para obtener bandas de confianza del MAE y RMSE.</li>
+            </ol>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">📐 Fundamento teórico y técnicas usadas</h3>
+            <ul class="method-steps">
+              <li><strong>Desagregación NILM.</strong> Partición de la potencia total en consumos individuales por equipo, sin sensores por circuito.</li>
+              <li><strong>Métricas de error energético:</strong> MAE (kW), RMSE (kW), RE % (error relativo de energía vs energía medida total).</li>
+              <li><strong>Matriz de confusión binaria.</strong> Clasificación ON/OFF por muestra, comparando predicción del modelo vs referencia de eventos detectados.</li>
+              <li><strong>Bootstrap.</strong> Estimación no paramétrica de intervalos de confianza mediante remuestreo de los residuos de reconstrucción.</li>
+            </ul>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">🧪 Explicación de los resultados obtenidos</h3>
+            <ul class="method-steps">
+              <li><strong>MAE/RMSE bajos y RE < 10 %.</strong> Desagregación precisa: las curvas individuales suman correctamente la potencia total.</li>
+              <li><strong>F1 alto (> 0,8).</strong> Detección ON/OFF fiable: pocos falsos positivos (equipos marcados como encendidos que están apagados) y pocos falsos negativos (equipos encendidos no detectados).</li>
+              <li><strong>Intervalos de confianza estrechos.</strong> El bootstrap muestra que el error de reconstrucción es estable y no depende de una muestra particular.</li>
+              <li><strong>Error sistemático por hora.</strong> Si el error es mayor en ciertas horas, puede indicar equipos no modelados o cambios de régimen no capturados.</li>
+            </ul>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">💡 Casos de uso y descripción de los mismos</h3>
+            <ul class="method-steps">
+              <li><strong>Auditar la calidad de la desagregación.</strong> Antes de confiar en kWh y costes por equipo, verificar que MAE y F1 sean aceptables.</li>
+              <li><strong>Comparar algoritmos.</strong> Usar las métricas de validación para elegir entre K-Means, GMM, DBSCAN y FHMM (véase pestaña Benchmark).</li>
+              <li><strong>Detectar equipos faltantes.</strong> Error de reconstrucción elevado y persistente sugiere equipos no incluidos en el modelo.</li>
+              <li><strong>Validar frente a cliente.</strong> Presentar F1 y RE % como evidencia de que la desagregación es fiable para facturación interna o informes de ahorro.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- Tab: Fugas / Standby (MEJORA #13) — consumo fantasma del residuo -->
@@ -960,6 +1061,58 @@
           <div id="anomaly-method" class="card-subtitle" style="margin-top:8px;"></div>
         </div>
       </div>
+
+      <!-- 📖 Metodología: Fugas y Consumo Standby -->
+      <div class="card methodology-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">📖 ¿Qué muestran las fugas y consumo standby?</h2>
+            <p class="card-subtitle">Residuo no atribuido tras desagregar (P_total − Σ equipos), curva de duración de carga, histograma del residuo y anomalías sobre el mismo</p>
+          </div>
+        </div>
+        <div class="methodology-body">
+          <div class="method-block">
+            <h3 class="method-heading">🧭 Cómo se construye — del residuo a la fuga identificada</h3>
+            <ol class="method-steps">
+              <li><strong>Cálculo del residuo.</strong> Standby = P_total − Σ(curvas desagregadas de todos los equipos). Es el consumo que no puede atribuirse a ningún equipo identificado.</li>
+              <li><strong>Mínimos nocturnos (00:00–05:00).</strong> En ese tramo se espera poca actividad; el nivel mínimo sostenido es la fuga base permanente de la instalación.</li>
+              <li><strong>Curva de duración de carga.</strong> Ordena los valores del residuo de mayor a menor y muestra qué potencia se supera el X% del tiempo: el P5 es la carga fantasma constante.</li>
+              <li><strong>Histograma del residuo.</strong> Distribución de los valores de kW del residuo: un pico estrecho = carga fantasma constante (fácil de eliminar); una distribución ancha = cargas variables no identificadas.</li>
+              <li><strong>Anomalías sobre el residuo.</strong> MAE móvil del residuo vs umbral robusto (mediana + 3×1.4826×MAD). Picos sostenidos = degradación de equipo o carga no catalogada.</li>
+            </ol>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">📐 Fundamento teórico y técnicas usadas</h3>
+            <ul class="method-steps">
+              <li><strong>Consumo fantasma (standby/vampire load).</strong> Energía consumida por equipos en estado de espera o conectados pero sin función activa.</li>
+              <li><strong>Curva de duración de carga (CDC).</strong> Representa el porcentaje de tiempo que se supera cada nivel de potencia; útil para dimensionar y identificar cargas base.</li>
+              <li><strong>Umbral robusto (MAD).</strong> Desviación Absoluta Mediana escalada (1.4826×MAD) para detectar anomalías sin que valores atípicos distorsionen el umbral.</li>
+              <li><strong>Ahorro potencial anual.</strong> Fuga base (kW) × horas al año (8760) × tarifa eléctrica (€/kWh).</li>
+            </ul>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">🧪 Explicación de los resultados obtenidos</h3>
+            <ul class="method-steps">
+              <li><strong>Pico estrecho en el histograma.</strong> Carga fantasma constante (ej. siempre conectados: routers, relojes, cargadores en espera) — acción directa: desconectar o usar regletas con interruptor.</li>
+              <li><strong>Distribución ancha o bimodal.</strong> Varias cargas no identificadas o equipos con consumo variable en espera — requiere investigación por circuito.</li>
+              <li><strong>Pico de MAE móvil sostenido.</strong> El residuo se desvía de su nivel base de forma sostenida: posible equipo degradado, carga nueva no catalogada o cambio de régimen operativo.</li>
+              <li><strong>P5 del residuo elevado.</strong> Fuga base significativa que incide directamente en la factura eléctrica las 24h del día.</li>
+            </ul>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">💡 Casos de uso y descripción de los mismos</h3>
+            <ul class="method-steps">
+              <li><strong>Cuantificar el ahorro potencial.</strong> Fuga base × 8760 h × tarifa = ahorro anual alcanzable eliminando consumos innecesarios.</li>
+              <li><strong>Detectar equipos "zombi".</strong> Cargas que consumen en espera sin función útil: transformadores, electrónica en standby, iluminación de seguridad excesiva.</li>
+              <li><strong>Priorizar intervenciones.</strong> Enfocar medidas en los equipos con mayor contribución al residuo nocturno.</li>
+              <li><strong>Monitoreo de degradación.</strong> Anomalías sostenidas en el residuo avisan de equipos que están fallando antes de que se rompan completamente.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- Tab: Benchmark de algoritmos + estabilidad de umbrales (MEJORA #9/#10) -->
@@ -988,6 +1141,58 @@
             <canvas id="chart-benchmark-f1"></canvas>
           </div>
           <div id="benchmark-table"></div>
+        </div>
+      </div>
+
+      <!-- 📖 Metodología: Benchmark de algoritmos -->
+      <div class="card methodology-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">📖 ¿Qué muestra el benchmark de algoritmos?</h2>
+            <p class="card-subtitle">Comparativa de K-Means / GMM / DBSCAN (+FHMM) y estabilidad de umbrales ±20% sobre métricas de validación (MAE, RMSE, RE, F1)</p>
+          </div>
+        </div>
+        <div class="methodology-body">
+          <div class="method-block">
+            <h3 class="method-heading">🧭 Cómo se construye — del clustering a la comparativa</h3>
+            <ol class="method-steps">
+              <li><strong>9 configuraciones.</strong> 3 algoritmos de clustering (K-Means, GMM, DBSCAN) × 2 variantes (sin FHMM / con FHMM) × 1 base = 9 ejecuciones del análisis completo.</li>
+              <li><strong>Variación de umbrales ±20%.</strong> Para cada configuración, se prueba el umbral de detección de saltos al ±20% para medir la estabilidad de los resultados.</li>
+              <li><strong>Re-ejecución completa.</strong> Cada configuración re-ejecuta el pipeline NILM: detección de eventos → clustering → emparejamiento ON↔OFF → desagregación → métricas.</li>
+              <li><strong>Métricas agregadas.</strong> Se calcula MAE, RMSE, RE % y F1 para cada configuración y se ordenan por F1 (mayor = mejor).</li>
+            </ol>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">📐 Fundamento teórico y técnicas usadas</h3>
+            <ul class="method-steps">
+              <li><strong>K-Means.</strong> Partición en k clusters minimizando la varianza intra-cluster; rápido y determinista con semilla fija.</li>
+              <li><strong>GMM (Gaussian Mixture Model).</strong> Modela cada cluster como una distribución gaussiana; permite clusters con forma elíptica y asignación probabilística.</li>
+              <li><strong>DBSCAN.</strong> Clustering basado en densidad; no requiere especificar k y detecta outliers (ruido) como puntos no pertenecientes a ningún cluster.</li>
+              <li><strong>FHMM + Viterbi.</strong> Añade estados intermedios (marcha parcial, carga plena) a través del Modelo Oculto de Markov Factorial y decodificación Viterbi.</li>
+              <li><strong>Estabilidad de umbrales.</strong> Sensibilidad del algoritmo a variaciones del umbral de detección: resultados estables si las métricas no varían más de ±20%.</li>
+            </ul>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">🧪 Explicación de los resultados obtenidos</h3>
+            <ul class="method-steps">
+              <li><strong>F1 alto y RE bajo.</strong> Configuración ganadora: detecta bien los ON/OFF y el error de energía es pequeño.</li>
+              <li><strong>Estable ante ±20% de umbral.</strong> Las métricas no se disparan al cambiar el umbral: el algoritmo es robusto y no depende de un ajuste fino.</li>
+              <li><strong>FHMM mejora F1 en equipos multi-estado.</strong> Equipos con niveles intermedios (aire acondicionado, compresores con inverter) se benefician de FHMM frente a clustering puro.</li>
+              <li><strong>DBSCAN detecta menos equipos pero más puros.</strong> Puede dejar algunos eventos como ruido, pero los clusters que forma son más compactos y confiables.</li>
+            </ul>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">💡 Casos de uso y descripción de los mismos</h3>
+            <ul class="method-steps">
+              <li><strong>Elegir el mejor algoritmo para tu instalación.</strong> Algunas plantas tienen equipos con estados claros (K-Means suficiente); otras tienen cargas variables que necesitan GMM o FHMM.</li>
+              <li><strong>Justificar la elección técnica.</strong> El benchmark da evidencia numérica (F1, RE %) para defender la selección de algoritmo ante cliente o dirección.</li>
+              <li><strong>Detectar sobreajuste.</strong> Si una configuración tiene F1 muy alto pero es inestable ante cambios de umbral, está sobreajustada y no se debe usar.</li>
+              <li><strong>Planificar escalabilidad.</strong> Conocer cuánto tarda cada configuración (9 ejecuciones) ayuda a estimar tiempos de análisis en instalaciones con más datos.</li>
+            </ul>
+          </div>
         </div>
       </div>
     </section>
@@ -1052,6 +1257,61 @@
             </div>
           </div>
           <div id="pq-events-table"></div>
+        </div>
+      </div>
+
+      <!-- 📖 Metodología: Calidad Energética (Power Quality) -->
+      <div class="card methodology-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">📖 ¿Qué muestra el diagnóstico de calidad energética?</h2>
+            <p class="card-subtitle">Tensión por fase, desequilibrio, corriente de neutro, K-factor, THD U/I y eventos de sag/swell — verificación contra límites EN 50160 / IEC 61000 / IEEE C57.110</p>
+          </div>
+        </div>
+        <div class="methodology-body">
+          <div class="method-block">
+            <h3 class="method-heading">🧭 Cómo se construye — de la forma de onda al diagnóstico</h3>
+            <ol class="method-steps">
+              <li><strong>Adquisición trifásica.</strong> Se miden simultáneamente corrientes (L1, L2, L3) y tensiones (U L1, L2, L3) en el punto de conexión común (PCC).</li>
+              <li><strong>Magnitudes de calidad.</strong> RMS por fase, desbalance de corriente y tensión, potencia activa/reactiva por fase y kVA de distorsión.</li>
+              <li><strong>Espectro armónico hasta H25.</strong> Descomposición de Fourier de la corriente para identificar cargas no lineales (armónicos 3.º, 5.º, 7.º, …).</li>
+              <li><strong>K-factor.</strong> Cuantifica el efecto de las armónicas en el calentamiento de transformadores; K > 1 indica presencia significativa de armónicas.</li>
+              <li><strong>Eventos de tensión.</strong> Detección de sags (U < 90% del nominal) y swells (U > 110% del nominal) sostenidos en el tiempo.</li>
+            </ol>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">📐 Fundamento teórico y técnicas usadas</h3>
+            <ul class="method-steps">
+              <li><strong>Descomposición IEEE 1459.</strong> Potencia activa (irreversible), reactiva (magnetización) y de distorsión; el kVA de distorsión cuantifica la capacidad de red perdida por armónicos.</li>
+              <li><strong>THD de corriente (IEEE 519).</strong> THD = I_armónicas / I_fundamental × 100 %. Cargas lineales ≈ 0–5 %; electrónica de conmutación dispara 3.º/5.º/7.º armónico.</li>
+              <li><strong>Desebalance de tensión (EN 50160).</strong> Desebalance = |U_max − U_min| / U_media × 100 %; límite típico < 2–3 % para evitar sobrecalentamiento de motores.</li>
+              <li><strong>Corriente de neutro.</strong> I_N alta por armónicos triplen (3.º, 9.º, 15.º) de cargas monofásicas; riesgo de sobrecarga del conductor neutro.</li>
+              <li><strong>Límites normativos.</strong> EN 50160 (calidad de tensión en redes públicas), IEC 61000 (EMC), IEEE C57.110 (transformadores bajo cargas no lineales).</li>
+            </ul>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">🧪 Explicación de los resultados obtenidos</h3>
+            <ul class="method-steps">
+              <li><strong>THD U elevado tras un arranque.</strong> Contaminación armónica del bus por electrónica de potencia (VFD, rectificadores, LED de conmutación).</li>
+              <li><strong>Desebalance > 3 %.</strong> Cargas monofásicas mal repartidas entre fases; puede causar sobrecalentamiento de neutro y disparos diferenciales.</li>
+              <li><strong>I_N alto con fases bajas.</strong> Armónicos triplen que se suman en el neutro; riesgo de sobrecarga del conductor neutro sin que las fases lo indiquen.</li>
+              <li><strong>Sags recurrentes.</strong> Caídas de tensión al arrancar motores grandes o equipos de alta potencia; indica impedancia de red elevada o capacidad insuficiente.</li>
+              <li><strong>K-factor elevado.</strong> Transformador trabajando bajo cargas no lineales; riesgo de sobrecalentamiento y vida reducida.</li>
+            </ul>
+          </div>
+
+          <div class="method-block">
+            <h3 class="method-heading">💡 Casos de uso y descripción de los mismos</h3>
+            <ul class="method-steps">
+              <li><strong>Verificación de cumplimiento normativo.</strong> Comparar THD, desbalance y eventos contra límites de EN 50160 / IEC 61000 para informes de calidad de suministro.</li>
+              <li><strong>Dimensionar filtros armónicos.</strong> Conocer qué órdenes armónicas dominan (3.º, 5.º, 7.º) para seleccionar filtros pasivos o activos.</li>
+              <li><strong>Equilibrar cargas monofásicas.</strong> Repartir cargas entre L1/L2/L3 para reducir desbalance y pérdidas en el neutro.</li>
+              <li><strong>Proteger transformadores.</strong> K-factor alto indica necesidad de transformadores con derating específico o refrigeración adicional.</li>
+              <li><strong>Diagnóstico de sags.</strong> Identificar si las caídas de tensión son por arranques internos (equipos grandes) o por la red externa (suministro débil).</li>
+            </ul>
+          </div>
         </div>
       </div>
     </section>
