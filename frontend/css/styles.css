@@ -549,6 +549,14 @@ body {
   color: var(--text-main);
 }
 
+/* FHMM priors grid — two equal columns for priors + compare charts */
+.fhmm-priors-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-top: 8px;
+}
+
 /* PASO 3: validación de la desagregación (pestaña Validación) */
 .validation-grid {
   display: grid;

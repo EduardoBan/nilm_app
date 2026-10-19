@@ -1216,6 +1216,10 @@ class NILMApp {
     // Grafico 1: perfil horario del prior de arranque por equipo (mejora #2)
     const c1 = document.getElementById("chart-fhmm-priors") as HTMLCanvasElement | null;
     if (c1 && fx.priors_used && fx.hourly_priors) {
+      // Ajustar tamaño interno del canvas para evitar render borroso (fuera de foco)
+      const p1 = c1.parentElement!;
+      c1.width = p1.clientWidth || 400;
+      c1.height = p1.clientHeight || 260;
       const ctx = c1.getContext("2d");
       if (ctx) {
         const W = c1.width, H = c1.height;
@@ -1270,6 +1274,10 @@ class NILMApp {
     // Grafico 2: minutos ON por hora, sin priors (gris) vs con priors (azul)
     const c2 = document.getElementById("chart-fhmm-compare") as HTMLCanvasElement | null;
     if (c2 && fx.on_minutes_total_before && fx.on_minutes_total_after) {
+      // Ajustar tamaño interno del canvas para evitar render borroso (fuera de foco)
+      const p2 = c2.parentElement!;
+      c2.width = p2.clientWidth || 400;
+      c2.height = p2.clientHeight || 260;
       const ctx2 = c2.getContext("2d");
       if (ctx2) {
         const W = c2.width, H = c2.height;
